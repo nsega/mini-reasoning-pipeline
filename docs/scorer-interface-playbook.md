@@ -6,8 +6,8 @@
 > rejected. Companions: `scorer-interface-worksheet.md` (what to decide),
 > `scorer-interface-illustration.md` (what a finished answer looks like).
 > Code samples below stay in the illustration's analogue domain (the
-> dependency resolver's `VersionPicker`), never the scorer. Delete this file
-> once the design lands.
+> dependency resolver's `VersionPicker`), never the scorer. Branch-only:
+> never merges to main; delete on the branch before the design merges.
 
 ## Practice 1 — stop at signatures
 
@@ -138,15 +138,18 @@ committed spec — keep them.
 
 ## Practice 2 — the rejected option, and where it lives
 
-One decision has three homes, in lifecycle order:
+One decision has four homes, in lifecycle order:
 
-1. **Worksheet blanks** (drafting): the full 2–4 bullets per question, in the
-   rubric shape — decision / rejected option + the failure it causes / cost
-   accepted / the assert.
-2. **`scorers.py` module docstring** (the landed ledger): the stub's four
+1. **Worksheet blanks** (drafting, branch-only): the full 2–4 bullets per
+   question, in the rubric shape — decision / rejected option + the failure
+   it causes / cost accepted / the assert.
+2. **`docs/design-notes.md`** (the public record): the worksheet answers
+   rewritten in Naoki's own voice, one section per decision. The only design
+   document that merges; the worksheet itself never does.
+3. **`scorers.py` module docstring** (the landed ledger): the stub's four
    *questions* are replaced by four *answers*, in place. The questions do not
    outlive their answers; the file documents itself.
-3. **README Design rationale** (the distillation): one bullet per decision,
+4. **README Design rationale** (the distillation): one bullet per decision,
    in the house voice.
 
 The house voice, read off `README.md:28-42`: **bold decision, mechanism, then
@@ -208,16 +211,23 @@ Verdict rules:
 
 ## The commit shape
 
-The design phase is **one commit** touching exactly three files:
+The design phase is **one commit** touching exactly four files:
 
 - `mini_reasoning/scorers.py` — ledger docstring + signatures
 - `tests/test_scorers.py` — three real tests + Q5 properties, red only by
   `NotImplementedError`
+- `docs/design-notes.md` — the TODOs replaced by the filled sections
 - `README.md` — the new bullets under Design rationale
 
 If this commit wants to touch `verifier.py`, `consistency.py`, `grpo.py`, or
 their tests, that is a Practice-3 finding escaping into the diff — stop and
 record it first, then decide.
+
+**Merge disposition of `docs/`**: `design-notes.md` merges. This playbook,
+the worksheet, and the illustration never do — delete them on the branch
+before opening the PR (the PR diff is the net change against main, so
+added-then-deleted files vanish from it), and prefer a squash merge so they
+stay out of main's history entirely.
 
 Implementation commits follow separately, module by module, turning red to
 green **with no further edits to the tests**. A test edit during

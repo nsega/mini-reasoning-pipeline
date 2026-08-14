@@ -6,6 +6,8 @@
 > reasoning is deliberately domain-specific so that nothing here transfers
 > verbatim — if you find yourself copying a conclusion, you have copied the
 > wrong layer. Companion to `docs/scorer-interface-worksheet.md`.
+> Branch-only teaching material: never merges to main; delete on the branch
+> before the design merges.
 
 ## Why an analogue
 

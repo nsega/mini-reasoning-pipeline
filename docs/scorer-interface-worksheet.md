@@ -2,8 +2,11 @@
 
 > Provenance: Claude-written scaffolding. It contains **questions, pointers to
 > evidence already in this repo, and blanks** — no design decisions. Every
-> answer is Naoki's. Delete this file once the answers land in
-> `mini_reasoning/scorers.py` and the README's Design decisions section.
+> answer is Naoki's. Branch-only: this file never merges to main. Its filled
+> answers get rewritten, in Naoki's voice, into `docs/design-notes.md` (the
+> one design doc that ships), the `scorers.py` module docstring, and the
+> README's Design rationale bullets; delete this file on the branch before
+> the design merges.
 
 ## How to use this
 
@@ -44,7 +47,8 @@ assertion that would catch a violation. If you cannot write it, the decision is
 still prose, not a contract. Collect the assertions as you go; Q5 is then just
 selecting the best 2–3.
 
-**Voice.** The destination is the README's Design rationale section, whose
+**Voice.** The destinations are `docs/design-notes.md` (the full record) and
+the README's Design rationale section (one bullet per decision), whose
 existing bullets all have the shape *chose X over Y, because Z (measured)*.
 Write every answer that way — name the rejected option.
 
