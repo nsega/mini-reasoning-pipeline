@@ -23,17 +23,25 @@ section as an HTML comment.
 
 ## One interface or two
 
-<!-- worksheet Q3.0: selection (no ground truth) vs verification (requires it) -->
+**Decision.**
+scorers.py defines selection only. A scorer picks among sampled solutions and never receives the ground truth.
+Verification stays in verifier.py as plain functions, and the caller (evaluate, or the GRPO trainer) runs them
+whenever grading is needed.
 
-**Decision.** _TODO_
+**Rejected.**
+Once combined interface that also grades (ground truth as an optional argument). Rejected because a selection scorer
+that CAN see the ground truth can silently cheat at eval time and at real interface time there is no ground truth to give it anyway.
 
-**Rejected.** _TODO_
+**Evidence.**
+(1) All three stages of the lab's verdict. Parseability gate, rank, vote agreement. need no ground truth.
+(2) Two of the four call sites (self-consistency voting, best-of-N selection) have no ground truth available at all.
 
-**Evidence.** _TODO_
+**Cost accepted.**
+Two swap points instead of one: Selection strategies swap in scorers.py, but reward strictness (boxed-only) swap at grpo.py.
+The README's phase "Scorer/reward is a swappable interface" overstates this, and I will fix it when the design lands.
 
-**Cost accepted.** _TODO_
-
-**Pinned by.** _TODO_
+**Pinned by.**
+test_scorers_share_one_call_contract, every scorer is callable with samples alone. The call signature has no ground-truth parameter.
 
 ## What a scorer consumes and returns
 
