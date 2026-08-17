@@ -30,15 +30,15 @@ whenever grading is needed.
 
 **Rejected.**
 Once combined interface that also grades (ground truth as an optional argument). Rejected because a selection scorer
-that CAN see the ground truth can silently cheat at eval time and at real interface time there is no ground truth to give it anyway.
+that CAN see the ground truth can silently cheat at eval time and at real inference time there is no ground truth to give it anyway.
 
 **Evidence.**
 (1) All three stages of the lab's verdict. Parseability gate, rank, vote agreement. need no ground truth.
 (2) Two of the four call sites (self-consistency voting, best-of-N selection) have no ground truth available at all.
 
 **Cost accepted.**
-Two swap points instead of one: Selection strategies swap in scorers.py, but reward strictness (boxed-only) swap at grpo.py.
-The README's phase "Scorer/reward is a swappable interface" overstates this, and I will fix it when the design lands.
+Two swap points instead of one: Selection strategies swap in scorers.py, but reward strictness (boxed-only) swap at the trainer harness - the training loop calls the verifier with fallback= None: grpo.py itself never sees text or extraction.
+The README's phrase "Scorer/reward is a swappable interface" overstates this, and I will fix it when the design lands.
 
 **Pinned by.**
 test_scorers_share_one_call_contract, every scorer is callable with samples alone. The call signature has no ground-truth parameter.
