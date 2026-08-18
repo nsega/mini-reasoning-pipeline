@@ -75,15 +75,24 @@ test_scorers_share_one_call_contract, every scorer is callable with samples alon
 
 <!-- worksheet Q3: evaluation / reward / validation; where strictness binds -->
 
-**Decision.** _TODO_
+**Decision.**
+All three roles share the same verifier: `verify_answer` is identical everywhere (sympy equivalence; None is always False), and so is the extraction machinery. The only per-role difference is extraction strictness.
+Role 2 (reward) is strict boxed-only (`fallback=None`) — thereward's type sets the training regime, so this is not open. Roles 1 and 3 (baseline and validation) both use lenient extraction (a non-None fallback), and they must be identical to eachother: before/after is only meaningful when both evals grade with the same ruler. That equality is enforced by writting the same fallback argument at both eval call sites - the committed default already fails toward strict on omission.
 
-**Rejected.** _TODO_
+**Rejected.**
+All-strict evals: they would break comparability with officially graded numbers and leave the committed fallback contract (TestFallback) with no consumer in the pipeline.
+A named-grader layer: one more indirection for a two-value choice.
 
-**Evidence.** _TODO_
+**Evidence.**
+(1) The no-fallback cost was measured precisely: 8/350 samples lost, worth 4 accuracy points at best-of-N under official grading —comparability with official numbers is why the fallback mode exists at all.
+(2) The reward's type (binary, no fallback) sets the training regime, so role 2's strictness was settled in the lab. (3) The committed default already fails toward strict: omitting the argument means boxed-only (test_no_box_default_is_none).
 
-**Cost accepted.** _TODO_
+**Cost accepted.**
+Eval grading is more lenient than the signal that trained the model, so the circularity claim must be stated precisely. Validation reuses the same verify_answer and extraction machinery that produced the rewards. Only extraction leniency differs. The README will say it in those words.
+role 1 == role 3 is held by discipline, not structure; the rule lives in this document and in a comment at both call sites.
 
-**Pinned by.** _TODO_
+**Pinned by.**
+test_same_verifier_serves_reward_and_validation_roles — on aboxed sample, all three roles return the same verdict; on an unboxed sample, the reward grader returns None (False) while the eval grader resuse it - the roles differ exactly where the policy applies, and nowhere else.
 
 ## Forensics: obligation or convention
 
