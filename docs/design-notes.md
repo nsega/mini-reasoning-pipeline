@@ -47,15 +47,39 @@ test_scorers_share_one_call_contract, every scorer is callable with samples alon
 
 <!-- worksheet Q1: signature, output type, and where the model asymmetry lives -->
 
-**Decision.** _TODO_
+**Decision.**
+A scorer takes the whole candidate set and returns one score per candidate, positionally aligned with the input:
+`score(candidates) -> list[float]`. It takes the set because the lab's own signals are relational — vote agreement scores
+a candidate only bycomparison with the others, exactly as `self_consistency_vote` already takes the full list.
+It returns scores rather than a winner because composition needs them: a gate that returned a winner would leave the ranking
+stage nothing to rank. Selection is the caller's `argmax` over the returned scores.
+The logprob asymmetry is place at the caller: every scorer receives the same precomputed material — the candidate text and,
+when available, its logprob summary — so no scorer holds a model and every one of them is a pure function of its inpu.
 
-**Rejected.** _TODO_
+**Rejected.**
+A scorer that owns the model: evaluate already receives model and scorer as separate parameters, so this would put two model
+references in one call, and it would make the pure heuristics untestable without a model double.
+ A per-candidate signature(`score(candidate) -> float`): vote agreement cannot be expressed in it without giving each candidate
+ a reference to the whole set it belongs to, which is circular. Returning a chosen index instead of scores: it makes
+the composite's stages unable to feed each other.
 
-**Evidence.** _TODO_
+**Evidence.**
+(1) `self_consistency_vote(candidates)` already takes the whole set, because a majority is not computable one candidate at a
+time —and vote agreement is the third stage of the lab's composition verdict.
+(2) The composition verdict itself (parseability gate → rank → votagreement) requires each stage to hand the next a
+per-candidate quantity, not a winner.
+(3) Q3.0 removed GRPO from this protocol's consumers, so the reward path's scalar-per-rollout requirement does not constrain
+this signature.
 
-**Cost accepted.** _TODO_
+**Cost accepted.**
+One shared input type that carries a field most scorers ignore, and the caller computes the logprob summary even in runs
+where no scorer uses it.
+A scorer that only needs one candidate still receives all of them, and every implementation must return a list
+whose length matches its input — a contract the caller relies onpositionally.
 
-**Pinned by.** _TODO_
+**Pinned by.**
+`test_scorers_share_one_call_contract` — every scorer,including a composite, is callable with the candidate set alone and
+returns a list of the same length.
 
 ## Composition and the veto
 
