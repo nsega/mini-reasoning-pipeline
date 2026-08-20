@@ -45,8 +45,6 @@ test_scorers_share_one_call_contract, every scorer is callable with samples alon
 
 ## What a scorer consumes and returns
 
-<!-- worksheet Q1: signature, output type, and where the model asymmetry lives -->
-
 **Decision.**
 A scorer takes the whole candidate set and returns one score per candidate, positionally aligned with the input:
 `score(candidates) -> list[float]`. It takes the set because the lab's own signals are relational — vote agreement scores
@@ -54,12 +52,12 @@ a candidate only bycomparison with the others, exactly as `self_consistency_vote
 It returns scores rather than a winner because composition needs them: a gate that returned a winner would leave the ranking
 stage nothing to rank. Selection is the caller's `argmax` over the returned scores.
 The logprob asymmetry is place at the caller: every scorer receives the same precomputed material — the candidate text and,
-when available, its logprob summary — so no scorer holds a model and every one of them is a pure function of its inpu.
+when available, its logprob summary — so no scorer holds a model and every one of them is a pure function of its iput.
 
 **Rejected.**
 A scorer that owns the model: evaluate already receives model and scorer as separate parameters, so this would put two model
 references in one call, and it would make the pure heuristics untestable without a model double.
- A per-candidate signature(`score(candidate) -> float`): vote agreement cannot be expressed in it without giving each candidate
+A per-candidate signature(`score(candidate) -> float`): vote agreement cannot be expressed in it without giving each candidate
  a reference to the whole set it belongs to, which is circular. Returning a chosen index instead of scores: it makes
 the composite's stages unable to feed each other.
 
@@ -85,15 +83,29 @@ returns a list of the same length.
 
 <!-- worksheet Q2: is Composite a scorer; what "reject" means on each path -->
 
-**Decision.** _TODO_
+**Decision.**
+`Composite` satisfies the same protocol as any other scorer —`score(candidates) -> list[float]` — so composites nest inside composites and every call site depends on one type. Stages run in the lab's order
+(parseability gate, then rank, then vote agreement) and their scores sum.
+A gate expresses rejection as `-inf` for that candidate, which is an absorbing element: no later stage can lift it, whatever it returns, so the caller's `argmax` can never land on a rejected candidate. The veto is
+enforced by `Composite`'s combination rule, not by each stage behaving well. When every candidate is rejected, the composite returns a list of all -inf and says nothing more; detecting that no candidate is selectable is the caller's job, because a scorer scores and does not decide.
 
-**Rejected.** _TODO_
+**Rejected.**
+Dropping rejected candidates from the list instead of marking them: it breaks the positional contract from Q1 — the returned list wouldno longer align with the input the caller holds — and it hides the
+rejection from any later inspection. A separate filter phase running before the scorers: it would put gates outside the protocol, so a gate could not itself be a composite of gates. Trusting each stage to leave rejected candidates alone: one stage with a different sign convention silently breaks the veto, and nothing turns red.
+Rasing from inside the composite: a scorer that raises cannot be composed with one that does not, and the same all-rejected list is a legitimate intermediate state inside a larger composite.
 
-**Evidence.** _TODO_
+**Evidence.**
+(1) Q1 fixed the positional contract — same length in, samelength out — so removal is not available to a stage.
+(2) `-inf` isabsorbing under the sum, which makes the veto a property of the combination rule rather than of stage behaviour.
+(3) The lab's verdict is an ordered composition (gate, then rank, then vote agreement), so the gate's outcome must survive two later stages to mean anything.
+(4) The group-size hazard that made masking necessary on the reward path no longer applies here — Q3.0 moved GRPO outside this protocol — so the reason formasking is now the positional contract alone.
 
-**Cost accepted.** _TODO_
+**Cost accepted.**
+Scores are not a bounded scale: they carry `-inf` as a sentinel, so any implementation combining them must be sum-compatible, and a stage returning a large positive number cannot be reasoned about independently of the gate.
+Every selection call site must check for the all-rejected case before taking argmax, or it will silently select the first candidate; this document and a comment at each call site carry that rule.
 
-**Pinned by.** _TODO_
+**Pinned by.**
+`test_parseability_gate_precedes_ranking` — a composite of agate that rejects a candidate and an adversarial later stage that returns `+inf` for everything still scores that candidate `-inf`; the gate's veto survives a stage built to break it.
 
 ## Three roles, one verifier
 
