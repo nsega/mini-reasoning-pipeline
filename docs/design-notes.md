@@ -109,8 +109,6 @@ Every selection call site must check for the all-rejected case before taking arg
 
 ## Three roles, one verifier
 
-<!-- worksheet Q3: evaluation / reward / validation; where strictness binds -->
-
 **Decision.**
 All three roles share the same verifier: `verify_answer` is identical everywhere (sympy equivalence; None is always False), and so is the extraction machinery. The only per-role difference is extraction strictness.
 Role 2 (reward) is strict boxed-only (`fallback=None`) — thereward's type sets the training regime, so this is not open. Roles 1 and 3 (baseline and validation) both use lenient extraction (a non-None fallback), and they must be identical to eachother: before/after is only meaningful when both evals grade with the same ruler. That equality is enforced by writting the same fallback argument at both eval call sites - the committed default already fails toward strict on omission.
@@ -134,15 +132,23 @@ test_same_verifier_serves_reward_and_validation_roles — on aboxed sample, all 
 
 <!-- worksheet Q4: metadata from inside the scorer, or storage by the harness -->
 
-**Decision.** _TODO_
+**Decision.**
+Forensics is a harness responsibility, not an interface obligation: the protocol stays `score(candidates) -> list[float]` and nothing more. `evaluate` stores the per-problem record it already promises — samples, extracted candidates, scores, and the selected index — and tharecord answers the questions the lab actually had to ask. The one fact itcannot answer is per-stage attribution inside a composite, because summing stage scores discards the breakdown; hat breakdown is accepted as lost, and if it is ever needed the composite can be re-run offline over the stored candidates, because every scorer is a pure function of its input (Q1).
 
-**Rejected.** _TODO_
+**Rejected.**
+Returning `(score, metadata)` from every scorer: it forces every call site, including the composite's inner loop, to unpack metadata it discards, and it makes the positional-alignment contract from Q1 harder to state. Requiring an `explain()` method on the protocol: every implementation, including a three-line test fake, would have to write one for a question the lab has never yet needed to ask. A debug method on Composite alone: it would be a second way to call a scorer that only one class supports, and re-running the pure composite offline already recovers the same numbers.
 
-**Evidence.** _TODO_
+**Evidence.**
+(1) The recoverability test: with candidates and final scores stored, "why was this candidate not selected" is answerable — a`-inf` identifies a gate rejection — so the interface does not need tocarry that.
+(2) The lab's selected-None-rate discovery needed only raw stored candidates, which is a harness capability, not a scorer one.
+(3) What storage cannot recover is a stage-level breakdown: the sum in Q2 is a lossy combination, and the parts exist only inside `Composite`.
+(4) `tests/test_scorers.py` committed three placeholder names covering the call contract, the veto, and the three roles — and none for forensics.
 
-**Cost accepted.** _TODO_
+**Cost accepted.**
+A composite's score is opaque about which stage produced it, so a future question of the form "did rank or vote agreement cost this candidate the selection" cannot be answered from stored records alone answering it means re-running the composite over the stored candidates rather than reading it off the record.
 
-**Pinned by.** _TODO_
+**Pinned by.**
+Nothing in `tests/test_scorers.py` — deliberately. Thisdecision is pinned negatively: the scorer protocol has exactly one method, so `test_scorers_share_one_call_contract` passing with a three-line fake that implements only `score` is itself the evidence that forensics was not made an obligation.
 
 ## The contract tests
 
