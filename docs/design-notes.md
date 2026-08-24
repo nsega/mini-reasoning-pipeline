@@ -81,8 +81,6 @@ returns a list of the same length.
 
 ## Composition and the veto
 
-<!-- worksheet Q2: is Composite a scorer; what "reject" means on each path -->
-
 **Decision.**
 `Composite` satisfies the same protocol as any other scorer —`score(candidates) -> list[float]` — so composites nest inside composites and every call site depends on one type. Stages run in the lab's order
 (parseability gate, then rank, then vote agreement) and their scores sum.
@@ -130,10 +128,8 @@ test_same_verifier_serves_reward_and_validation_roles — on aboxed sample, all 
 
 ## Forensics: obligation or convention
 
-<!-- worksheet Q4: metadata from inside the scorer, or storage by the harness -->
-
 **Decision.**
-Forensics is a harness responsibility, not an interface obligation: the protocol stays `score(candidates) -> list[float]` and nothing more. `evaluate` stores the per-problem record it already promises — samples, extracted candidates, scores, and the selected index — and tharecord answers the questions the lab actually had to ask. The one fact itcannot answer is per-stage attribution inside a composite, because summing stage scores discards the breakdown; hat breakdown is accepted as lost, and if it is ever needed the composite can be re-run offline over the stored candidates, because every scorer is a pure function of its input (Q1).
+Forensics is a harness responsibility, not an interface obligation: the protocol stays `score(candidates) -> list[float]` and nothing more. `evaluate` stores the per-problem record it already promises — samples, extracted candidates, scores, and the selected index — and tharecord answers the questions the lab actually had to ask. The one fact itcannot answer is per-stage attribution inside a composite, because summing stage scores discards the breakdown; hat breakdown is accepted as lost, and if it is ever needed the composite can be re-run offline over the stored candidates, because every scorer is a pure function of its input (Q1). Provided that record holds the precomputed material, including the logprob summary, and not just the raw text. That requirement lands on `evaluate`'s record, not on the protocol.
 
 **Rejected.**
 Returning `(score, metadata)` from every scorer: it forces every call site, including the composite's inner loop, to unpack metadata it discards, and it makes the positional-alignment contract from Q1 harder to state. Requiring an `explain()` method on the protocol: every implementation, including a three-line test fake, would have to write one for a question the lab has never yet needed to ask. A debug method on Composite alone: it would be a second way to call a scorer that only one class supports, and re-running the pure composite offline already recovers the same numbers.
