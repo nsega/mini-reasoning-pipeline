@@ -102,6 +102,9 @@ Rasing from inside the composite: a scorer that raises cannot be composed with o
 Scores are not a bounded scale: they carry `-inf` as a sentinel, so any implementation combining them must be sum-compatible, and a stage returning a large positive number cannot be reasoned about independently of the gate.
 Every selection call site must check for the all-rejected case before taking argmax, or it will silently select the first candidate; this document and a comment at each call site carry that rule.
 
+The None filter runs twice — once inside `self_consistency_vote` by module policy,once as the composite's first stage, and that redundancy is accepted: the twoowners answer different questions, one protecting a vote it does not control the
+input of, the other producing a score. Neither can assume the other ran.
+
 **Pinned by.**
 `test_parseability_gate_precedes_ranking` — a composite of agate that rejects a candidate and an adversarial later stage that returns `+inf` for everything still scores that candidate `-inf`; the gate's veto survives a stage built to break it.
 
@@ -150,5 +153,20 @@ Nothing in `tests/test_scorers.py` — deliberately. Thisdecision is pinned nega
 
 <!-- worksheet Q5: 2-3 properties that must hold for ANY implementation -->
 
-_TODO — one line per property, each naming the test in `tests/test_scorers.py`
-that enforces it._
+Three properties must hold for any implementation of this interface. The three test names already committed in `tests/test_scorers.py` stay as they are; these are what they assert.
+
+**One call contract.**
+Every scorer — a bare heuristic, the logprobscorer, or a `Composite`, which is callable with the candidate set alone, takesno ground-truth parameter, and returns a list the same length as its input. Enforced by `test_scorers_share_one_call_contract`, over a tuple of one plain scorer and one composite so that the composite is held to the same contract as its parts.
+
+**The veto is absorbing.**
+A candidate a gate rejected stays rejected no matter what follows it. Enforced by `test_parseability_gate_precedes_ranking`, composing the gate with an adversarial stage that returns `+inf` for everything: the rejected candidate still scores `-inf`. The test is written against a stage built to break the rule, not a well-behaved one, because the veto is a property of the combination rule rather than of stage behaviour.
+
+**Scorers are pure.**
+Calling `score` twice on the same candidates returns equal results, and the input list is unchanged afterwards. Enforced by a new test alongside the committed three. This one is load-bearing rather than defensive: the forensics decision rests entirely on being able to re-run a composite offline over the stored record, so purity is the assumption that has to be pinned, not assumed.
+
+**An all-rejected set is data, not an error.**
+When every candidate is rejected the composite returns a list of `-inf` and does not raise, so a composite can be nested inside another composite that treats that list as a legitimate intermediate result. Enforced by a case asserting the return value and, explicitly, the absence of an exception — the deliberatecounterpart to `self_consistency_vote`, which raises on empty input because it is a selector and must decide.
+
+`test_same_verifier_serves_reward_and_validation_roles` covers the role split rather than a property of the scorer protocol: on a boxed sample all three roles return the same verdict, and on an unboxed sample the reward grader returns None while the eval grader rescues it — th eroles differ exactly where extraction strictness applies and nowhere else.
+
+House style follows the existing suite: class-grouped, one idea per test, concrete literal values rather than generated ones, and a comment naming the measurement that motivated the test.
