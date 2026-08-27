@@ -57,7 +57,7 @@ when available, its logprob summary — so no scorer holds a model and every one
 **Rejected.**
 A scorer that owns the model: evaluate already receives model and scorer as separate parameters, so this would put two model
 references in one call, and it would make the pure heuristics untestable without a model double.
-A per-candidate signature(`score(candidate) -> float`): vote agreement cannot be expressed in it without giving each candidate
+A per-candidate signature (`score(candidate) -> float`): vote agreement cannot be expressed in it without giving each candidate
  a reference to the whole set it belongs to, which is circular. Returning a chosen index instead of scores: it makes
 the composite's stages unable to feed each other.
 
@@ -88,7 +88,7 @@ A gate expresses rejection as `-inf` for that candidate, which is an absorbing e
 enforced by `Composite`'s combination rule, not by each stage behaving well. When every candidate is rejected, the composite returns a list of all -inf and says nothing more; detecting that no candidate is selectable is the caller's job, because a scorer scores and does not decide.
 
 **Rejected.**
-Dropping rejected candidates from the list instead of marking them: it breaks the positional contract — the returned list wouldno longer align with the input the caller holds — and it hides the
+Dropping rejected candidates from the list instead of marking them: it breaks the positional contract — the returned list would no longer align with the input the caller holds — and it hides the
 rejection from any later inspection. A separate filter phase running before the scorers: it would put gates outside the protocol, so a gate could not itself be a composite of gates. Trusting each stage to leave rejected candidates alone: one stage with a different sign convention silently breaks the veto, and nothing turns red.
 Raising from inside the composite: a scorer that raises cannot be composed with one that does not, and the same all-rejected list is a legitimate intermediate state inside a larger composite.
 
@@ -126,7 +126,7 @@ Eval grading is more lenient than the signal that trained the model, so the circ
 role 1 == role 3 is held by discipline, not structure; the rule lives in this document and in a comment at both call sites.
 
 **Pinned by.**
-test_same_verifier_serves_reward_and_validation_roles — on a boxed sample, all three roles return the same verdict; on an unboxed sample, the reward grader returns None (False) while the eval grader resuses it - the roles differ exactly where the policy applies, and nowhere else.
+test_same_verifier_serves_reward_and_validation_roles — on a boxed sample, all three roles return the same verdict; on an unboxed sample, the reward grader returns None (False) while the eval grader rescues it - the roles differ exactly where the policy applies, and nowhere else.
 
 ## Forensics: obligation or convention
 
@@ -172,21 +172,19 @@ House style follows the existing suite: class-grouped, one idea per test, concre
 
 ## Stub contract audit
 
-Every contract this repo committed before the interface existed, checked
-against the design. UNCHANGED rows name the design element that satisfies
-them; CHANGED rows record which side was wrong.
+Every contract this repo committed before the interface existed, checked against the design. UNCHANGED rows name the design element that satisfies them; CHANGED rows record which side was wrong.
 
 | # | Contract | Verdict |
 |---|---|---|
 | 1 | `extract_final_candidate(text, fallback=None)`, boxed-only default | UNCHANGED — *Three roles, one verifier* passes strictness per call and rests its fail-safe argument on this default, so the design depends on the promise rather than merely tolerating it. |
-| 2 | A non-None fallback mode exists and rescues a bare number | [①] |
+| 2 | A non-None fallback mode exists and rescues a bare number | UNCHANGED — the mode has a consumer, which is what the contract needs: the two eval roles use it. The design does not name the mode; that lands with the extractor's signature, constrained by the `fallback="number"` literal the committed test already pins. |
 | 3 | `verify_answer(candidate, ground_truth)`, None is always False | UNCHANGED — verification stays in `verifier.py` as plain functions, and this contract is the part all three roles share unchanged. |
-| 4 | `self_consistency_vote(candidates)`: list in, winner out; None excluded pre-vote; empty raises; deterministic tiebreak | [②] |
+| 4 | `self_consistency_vote(candidates)`: list in, winner out; None excluded pre-vote; empty raises; deterministic tiebreak | UNCHANGED — the contract holds untouched, but the design places a second vote-counting implementation beside it: `self_consistency_vote` returns a winner and owns the None-exclusion policy its module was assigned, while the composite's vote-agreement stage returns per-candidate agreement scores under the scorer signature. Recorded as accepted duplication, on the same grounds as the redundancy accepted in *Composition and the veto*: the two answer different questions, and neither may assume the other ran. |
 | 5 | Group of one raises; zero-variance returns exact zeros | UNCHANGED — the reward path sits outside the scorer protocol, so no scorer ever hands a group to `grpo.py`. |
 | 6 | `grpo_loss(logprobs, advantages)`: descent direction, advantages detached | UNCHANGED — `grpo.py` receives only logprobs and advantages; the scorer's logprob summary is built on the eval path instead, which is row 7. |
 | 7 | `evaluate(model, tokenizer, problems, scorer)`, per-problem records | **CHANGED** — see Findings. |
 | 8 | The three committed test names in `tests/test_scorers.py` | UNCHANGED — all three are writable under their existing names, and *The contract tests* adds two further tests without renaming any. |
-| 9 | `--n-samples` default 7 | [③] |
+| 9 | `--n-samples` default 7 | CHANGED (wording only) — the flag now also sets the candidate-set size handed to the composite scorer, not only to self-consistency. The help text "samples per problem for self-consistency" narrows what the flag controls, and is updated when the design lands. |
 
 ### Findings
 
