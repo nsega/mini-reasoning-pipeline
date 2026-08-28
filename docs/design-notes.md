@@ -9,18 +9,6 @@
 > interface is the capstone's closed-book constraint). The section skeleton
 > was scaffolded; the content is Naoki's.
 
-<!--
-HOW TO FILL THIS FILE (delete this comment before merge)
-
-Source: your filled answers in docs/scorer-interface-worksheet.md (branch-
-only), rewritten in your own voice. Each section follows the same rubric:
-decision / rejected option + the concrete failure it causes / evidence (a
-lab measurement or a forcing call site) / cost accepted / the test that
-pins it. Prefer stable references (function names) over file:line numbers,
-which rot as implementations land. Worksheet question mapping is noted per
-section as an HTML comment.
--->
-
 ## One interface or two
 
 **Decision.**
@@ -189,7 +177,7 @@ Every contract this repo committed before the interface existed, checked against
 ### Findings
 
 **Row 7 — `evaluate` widens in two directions.**
-The signature places themodel asymmetry at the caller, so on the eval path `evaluate` must *build* the material bundle, including the logprob summary; and the offline re-run argument in *Forensics* requires that bundle to be *stored*, not just the raw text. The stub promises neither. It was under-specified rather than wrong: it was written before the material type existed. Both obligations land on `evaluate`, and neither reaches the protocol.
+The signature places the model asymmetry at the caller, so on the eval path `evaluate` must *build* the material bundle, including the logprob summary; and the offline re-run argument in *Forensics* requires that bundle to be *stored*, not just the raw text. The stub promises neither. It was under-specified rather than wrong: it was written before the material type existed. Both obligations land on `evaluate`, and neither reaches the protocol.
 
 **Not in this table.**
 The README's phrase "Scorer/reward is a swappable interface" overstates the design, since reward strictness swaps at the trainer harness rather than in `scorers.py`. That is prose rather than a committed contract, and it is corrected when the design lands.
