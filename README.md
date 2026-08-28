@@ -25,22 +25,35 @@ The design decisions here were earned in a 3-week study lab
 (private repo) built around Sebastian Raschka's *Build a Reasoning
 Model (From Scratch)*:
 
-- **Scorer/reward is a swappable interface** (the hard constraint):
-  no single selection signal survived ablation. Majority voting is
-  poisoned by failed extractions pooling on one key; per-token logprob
-  scoring over-selects degenerate fluency (a repetition loop is a
-  confident place to be); a brevity heuristic skips long correct
-  solutions. The interface composes signals: parseability gate first,
-  then rank, then vote agreement.
-- **No-KL default for small-model sparse-reward GRPO**: with ~10%
-  solve rates, most rollout groups are zero-advantage, and the simple
-  signed-logratio KL penalty becomes the dominant gradient, uniformly
-  suppressing the policy's own samples. Measured: the KL arm collapsed
-  in 40 steps while the no-KL arm held steady.
-- **Entropy and reference drift, not reward, are the training
-  dashboard**: they moved first in every failure observed.
-- **Level-reweighted reporting** for any comparison against published
-  MATH-500 numbers: a 50-problem seed-fixed subset skews hard.
+- **Selection is a swappable interface** (the hard constraint): no single
+  signal survived ablation. Majority voting is poisoned by failed
+  extractions pooling on one key; per-token logprob scoring over-selects
+  degenerate fluency (a repetition loop is a confident place to be); a
+  brevity heuristic skips long correct solutions. The interface composes
+  signals — parseability gate first, then rank, then vote agreement.
+  *Verification* is deliberately not part of it: a selection scorer never
+  receives the ground truth, because two of its four call sites have none,
+  and one that could see it could quietly cheat at eval time. Reward
+  strictness therefore swaps at the trainer harness, not in `scorers.py`.
+- **Scorers are pure functions of precomputed material**: the caller builds
+  the bundle, so no scorer holds a model and the pure heuristics need no
+  model double to test. Purity is also what makes a composite re-runnable
+  offline over stored records, which is why the interface carries no
+  reporting method of its own.
+- **The veto is structural, not behavioural**: a gate rejects by scoring
+  `-inf`, an absorbing element under the sum, so no later stage can lift a
+  rejected candidate however it is written. Chosen over dropping, which
+  would break the positional alignment the caller relies on.
+- **One verifier, three roles, one difference**: evaluation, reward and
+  validation share the same grader and extraction machinery; only
+  extraction strictness differs. Reward is boxed-only, and boxed-only is
+  the default, so a forgotten argument fails toward strictness rather than
+  away from it.
+
+The full record — every rejected option, its evidence, and the cost
+accepted — is in [docs/design-notes.md](docs/design-notes.md), together
+with an audit of the design against every contract this repo committed
+before the interface existed.
 
 ## Reproduction
 
