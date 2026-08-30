@@ -33,7 +33,7 @@ class Constant:
 
 
 class TestOneCallContract:
-    def test_every_scorer_shares_one_signature(self):
+    def test_scorers_share_one_call_contract(self):
         # No ground-truth parameter anywhere: selection runs where none exists.
         for scorer in (ParseabilityGate(), VoteAgreement(),
                        Composite((ParseabilityGate(), VoteAgreement()))):
