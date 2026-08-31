@@ -51,6 +51,7 @@ class Scorer(Protocol):
 @dataclass(frozen=True)
 class ParseabilityGate:
     """REJECTED for any candidate no answer can be extracted from, 0.0 otherwise."""
+    fallback: str | None = None    # boxed-only unless the caller says otherwise
 
     def score(self, candidates: Sequence[Candidate]) -> list[float]:
         raise NotImplementedError
@@ -72,6 +73,7 @@ class VoteAgreement:
     and owns its own None-exclusion policy; accepted duplication, recorded
     in the stub contract audit.
     """
+    fallback: str | None = None    # boxed-only unless the caller says otherwise
 
     def score(self, candidates: Sequence[Candidate]) -> list[float]:
         raise NotImplementedError

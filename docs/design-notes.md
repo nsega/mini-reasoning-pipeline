@@ -42,6 +42,8 @@ stage nothing to rank. Selection is the caller's `argmax` over the returned scor
 The logprob asymmetry is placed at the caller: every scorer receives the same precomputed material — the candidate text and,
 when available, its logprob summary — so no scorer holds a model and every one of them is a pure function of its input.
 
+Extraction is not part of the material. The parseability gate and vote agreement each call `extract_final_candidate` themselves, because extraction needs no model and so creates none of the asymmetry the bundle exists to remove. Each carries its own `fallback` as a construction-time field defaulting to boxed-only, so the caller still chooses strictness and an omission still fails toward strict. On the selection path the caller passes the eval fallback: a gate stricter than the grader that follows it would discard candidates the grader could have scored, which is the 8/350 samples the fallback exists to recover.
+
 **Rejected.**
 A scorer that owns the model: evaluate already receives model and scorer as separate parameters, so this would put two model
 references in one call, and it would make the pure heuristics untestable without a model double.
@@ -62,6 +64,8 @@ One shared input type that carries a field most scorers ignore, and the caller c
 where no scorer uses it.
 A scorer that only needs one candidate still receives all of them, and every implementation must return a list
 whose length matches its input — a contract the caller relies on positionally.
+
+Extraction runs inside two stages rather than once at the caller, so the strictness rule now lives at three call sites instead of two, and a stage reused in a stricter context would need its fallback set again.
 
 **Pinned by.**
 `test_scorers_share_one_call_contract` — every scorer, including a composite, is callable with the candidate set alone and
