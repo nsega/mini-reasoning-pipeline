@@ -1,21 +1,20 @@
-"""Verifier: extraction + equivalence grading. Role 1 of 3 (evaluation).
+"""Verifier: extraction and equivalence grading, shared by all three roles.
 
-To be self-written by Naoki (scaffold stub; contract below encoded in
-tests/test_verifier.py). Lab lessons to carry in:
+Evaluation, reward and validation use the same verify_answer and the same
+extraction machinery. They differ only in extraction strictness, which the
+caller passes per call. The full record of what was decided and rejected is
+in docs/design-notes.md.
 
-- extract_final_candidate(text, fallback=None) -> str | None
-  Last \\boxed{...} via brace counting (regex cannot nest). NEW vs the
-  lab version: an optional fallback mode, because the lab measured the
-  no-fallback cost precisely (8/350 samples lost vs the official
-  number_then_full fallback; at best-of-N selection time the missing
-  fallback was worth 4 accuracy points under official grading). Naoki
-  designs the fallback contract; boxed-only (fallback=None) must remain
-  the default so the REWARD role stays strict.
-- verify_answer(candidate, ground_truth) -> bool
-  Sympy equivalence (simplify(gt - pred) == 0 shape); proven equivalent
-  to the official grader on every shared candidate in the lab
-  cross-check. None is always False. The lab's normalize_text was
-  Claude-written and must be rewritten from scratch here.
+- Boxed-only is the default, which is the strictness the reward role
+  depends on: omitting the fallback argument fails toward strict rather
+  than away from it.
+- The lenient mode exists for comparability with officially graded numbers.
+  The lab measured its absence at 8/350 samples lost, worth 4 accuracy
+  points at best-of-N under official grading.
+- Grading is sympy equivalence, proven equal to the official grader on
+  every shared candidate in the lab cross-check. A None candidate is always
+  False, and unparseable input grades False rather than raising, so a
+  malformed sample cannot crash the reward path mid-training.
 """
 
 import re
