@@ -1,13 +1,16 @@
 # Design notes: the scorer interface
 
-> Status: draft — fills in as the interface design lands. This is the one
-> design document that ships with the public repo. The README's Design
-> rationale gives one bullet per decision; this file holds the full version:
-> what was decided, what was rejected, and the evidence for each.
+> Status: the interface design is settled; further sections land as
+> implementation decisions are made. This is the one design document that
+> ships with the public repo. The README's Design rationale gives one bullet
+> per decision; this file holds the full version: what was decided, what was
+> rejected, and the evidence for each.
 >
-> Provenance: all decisions recorded here are self-written (the scorer
-> interface is the capstone's closed-book constraint). The section skeleton
-> was scaffolded; the content is Naoki's.
+> Provenance: the scorer interface is the capstone's closed-book
+> constraint, so every decision recorded here is self-written with one
+> exception. The section skeleton was scaffolded; the content is Naoki's.
+> The exception is *The fallback contract*, drafted with Claude while the
+> verifier was implemented, from options Claude proposed and Naoki accepted.
 
 ## One interface or two
 
