@@ -1,13 +1,16 @@
 # Design notes: the scorer interface
 
-> Status: draft — fills in as the interface design lands. This is the one
-> design document that ships with the public repo. The README's Design
-> rationale gives one bullet per decision; this file holds the full version:
-> what was decided, what was rejected, and the evidence for each.
+> Status: the interface design is settled; further sections land as
+> implementation decisions are made. This is the one design document that
+> ships with the public repo. The README's Design rationale gives one bullet
+> per decision; this file holds the full version: what was decided, what was
+> rejected, and the evidence for each.
 >
-> Provenance: all decisions recorded here are self-written (the scorer
-> interface is the capstone's closed-book constraint). The section skeleton
-> was scaffolded; the content is Naoki's.
+> Provenance: the scorer interface is the capstone's closed-book
+> constraint, so every decision recorded here is self-written with one
+> exception. The section skeleton was scaffolded; the content is Naoki's.
+> The exception is *The fallback contract*, drafted with Claude while the
+> verifier was implemented, from options Claude proposed and Naoki accepted.
 
 ## One interface or two
 
@@ -120,6 +123,27 @@ role 1 == role 3 is held by discipline, not structure; the rule lives in this do
 **Pinned by.**
 test_same_verifier_serves_reward_and_validation_roles — on a boxed sample, all three roles return the same verdict; on an unboxed sample, the reward grader returns None (False) while the eval grader rescues it - the roles differ exactly where the policy applies, and nowhere else.
 
+## The fallback contract
+
+**Decision.**
+`extract_final_candidate(text, fallback=None)` takes exactly one lenient mode, `"number"`, alongside the boxed-only default. The rescue is a second strategy rather than a competing one: it runs only where the strict rule found nothing, so a boxed answer always wins. All three ways of failing the strict rule (no `\boxed` at all, no brace after it, and a brace the sample ends before closing) collapse to a single exit, so the `fallback` argument alone decides whether a sample without a usable box has an answer at all. `"number"` takes the last number in the text, consistent with the last box winning on the strict path, and strips thousands separators. An empty `\boxed{}` counts as no answer and reaches the rescue rather than returning `""`. An unrecognised mode raises `ValueError` before the text is searched.
+
+**Rejected.**
+The official `number_then_full` chain, whose second link falls back to the whole sample text. Its second link can only match when the entire sample is itself a bare answer, which never happens for chain-of-thought output, so it recovers nothing measurable while handing the parser a paragraph that implicit multiplication turns into a product of symbols. The 8/350 recovery the mode exists for comes from the number link alone.
+Distinguishing the three strict-rule failures, so that a truncated `\boxed{` would be treated differently from a sample that never boxed at all. The difference is not visible to the grader, and it would make the rescue fire for one cut-off sample and not another.
+Silently degrading an unknown mode to boxed-only. It makes a typo behave correctly on most samples and fail rarely, which is the worst available failure shape given that strictness now lives at three call sites.
+
+**Evidence.**
+(1) A truncated box argues for the funnel rather than against it: `rfind` targets the last `\boxed`, so `\boxed{1} then \boxed{2` extracts as nothing under the strict rule even though the sample did box an answer, and the rescue recovers the model's final attempt.
+(2) The mode check must precede the search. A misspelled mode that only raised where no number was found would pass silently on most samples and leave roles 1 and 3 grading with different rulers, which *Three roles, one verifier* already records as held by discipline rather than structure.
+(3) sympy parses `"1,000"` into the tuple `(1, 0)` rather than raising, so an unstripped separator surfaces as a TypeError inside grading rather than as a wrong answer.
+
+**Cost accepted.**
+The mode is a bare string rather than an enum, so the three call sites can still disagree. The `ValueError` turns a typo from a silent divergence into a loud one, but nothing stops a site from being left on the default and quietly grading stricter than its peers. Two behaviours are also unpinned by any test: the thousands-separator stripping, and the empty-box decision.
+
+**Pinned by.**
+`TestFallbackContract` in `tests/test_verifier.py`: a boxed answer wins over the rescue, no number stays None, the last number wins, a sign and a decimal point survive, a truncated box is rescued under a mode and stays None under the default, an empty box is not an answer, and an unknown mode raises on every input. The committed `test_fallback_rescues_bare_number` continues to pin only that some non-None mode exists.
+
 ## Forensics: obligation or convention
 
 **Decision.**
@@ -169,7 +193,7 @@ Every contract this repo committed before the interface existed, checked against
 | # | Contract | Verdict |
 |---|---|---|
 | 1 | `extract_final_candidate(text, fallback=None)`, boxed-only default | UNCHANGED — *Three roles, one verifier* passes strictness per call and rests its fail-safe argument on this default, so the design depends on the promise rather than merely tolerating it. |
-| 2 | A non-None fallback mode exists and rescues a bare number | UNCHANGED — the mode has a consumer, which is what the contract needs: the two eval roles use it. The design does not name the mode; that lands with the extractor's signature, constrained by the `fallback="number"` literal the committed test already pins. |
+| 2 | A non-None fallback mode exists and rescues a bare number | UNCHANGED — the mode has a consumer, which is what the contract needs: the two eval roles use it. The mode is now named: `"number"` is the only lenient mode, and *The fallback contract* records what it rescues, what the official chain's second link was dropped for, and what an unknown mode does. |
 | 3 | `verify_answer(candidate, ground_truth)`, None is always False | UNCHANGED — verification stays in `verifier.py` as plain functions, and this contract is the part all three roles share unchanged. |
 | 4 | `self_consistency_vote(candidates)`: list in, winner out; None excluded pre-vote; empty raises; deterministic tiebreak | UNCHANGED — the contract holds untouched, but the design places a second vote-counting implementation beside it: `self_consistency_vote` returns a winner and owns the None-exclusion policy its module was assigned, while the composite's vote-agreement stage returns per-candidate agreement scores under the scorer signature. Recorded as accepted duplication, on the same grounds as the redundancy accepted in *Composition and the veto*: the two answer different questions, and neither may assume the other ran. |
 | 5 | Group of one raises; zero-variance returns exact zeros | UNCHANGED — the reward path sits outside the scorer protocol, so no scorer ever hands a group to `grpo.py`. |

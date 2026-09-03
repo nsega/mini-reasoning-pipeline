@@ -3,6 +3,8 @@
 Week 1 pass criteria carried forward, plus the fallback contract the
 lab measured the need for.
 """
+import pytest
+
 from mini_reasoning.verifier import extract_final_candidate, verify_answer
 
 
@@ -32,6 +34,48 @@ class TestFallback:
         # design; this test pins only that SOME non-None fallback exists.
         got = extract_final_candidate("the answer is 7", fallback="number")
         assert got is not None and "7" in got
+
+
+class TestFallbackContract:
+    """The fallback decisions TestFallback above does not pin.
+
+    The committed test asserts only that SOME non-None mode rescues a
+    bare number. These pin the contract designed around it: which
+    failures the rescue applies to, which number it picks, and what a
+    bad mode name does. Recorded in docs/design-notes.md under
+    "The fallback contract".
+    """
+
+    def test_boxed_wins_over_fallback(self):
+        assert extract_final_candidate(
+            r"\boxed{1}, or maybe 9", fallback="number") == "1"
+
+    def test_no_number_stays_none(self):
+        assert extract_final_candidate(
+            "no digits at all", fallback="number") is None
+
+    def test_last_number_wins(self):
+        assert extract_final_candidate(
+            "first 3 then 7", fallback="number") == "7"
+
+    def test_negative_decimal_survives(self):
+        assert extract_final_candidate(
+            "the answer is -3.5", fallback="number") == "-3.5"
+
+    def test_truncated_box_is_rescued(self):
+        assert extract_final_candidate(
+            r"\boxed{1} then \boxed{2", fallback="number") == "2"
+
+    def test_truncated_box_stays_none_when_strict(self):
+        assert extract_final_candidate(r"so \boxed{42") is None
+
+    def test_empty_box_is_not_an_answer(self):
+        assert extract_final_candidate(r"\boxed{}") is None
+
+    def test_unknown_mode_raises_regardless_of_input(self):
+        for text in ("the answer is 7", "no digits at all"):
+            with pytest.raises(ValueError):
+                extract_final_candidate(text, fallback="numbers")
 
 
 class TestVerification:
