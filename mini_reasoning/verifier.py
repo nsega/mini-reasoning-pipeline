@@ -26,9 +26,110 @@ from sympy.core.sympify import SympifyError
 from sympy.parsing import sympy_parser as spp
 from sympy.polys.polyerrors import PolynomialError
 
+_FALLBACK_MODES = ("number",)
 
-def extract_final_candidate(text, fallback=None):
-    raise NotImplementedError("capstone self-written implementation (Naoki)")
+_NUMBER_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
+
+
+def extract_final_candidate(
+    text: str,
+    fallback: str | None = None,
+) -> str | None:
+    """Extracts the model's final answer from a sampled solution.
+
+    The strict rule is the last complete ``\\boxed{...}``. Every way of
+    failing it collapses to a single exit, so `fallback` alone decides
+    whether a sample without a usable box has an answer at all.
+
+    Args:
+        text: The full sampled solution.
+        fallback: Lenient mode to apply when no boxed answer is found.
+            None, the default, is boxed-only, which is the strictness the
+            reward role depends on.
+
+    Returns:
+        The extracted answer, or None when no rule matched.
+
+    Raises:
+        ValueError: If `fallback` names a mode that does not exist.
+    """
+    boxed = _extract_boxed(text)
+    if boxed:
+        return boxed
+    return _rescue(text, fallback)
+
+
+def _extract_boxed(text: str) -> str | None:
+    """Finds the last complete ``\\boxed{...}`` in a sampled solution.
+
+    Brace counting rather than a regular expression, because the contents
+    nest. All three ways of failing return None: no ``\\boxed`` at all, no
+    brace after it, and a brace the sample ends before closing.
+
+    Args:
+        text: The full sampled solution.
+
+    Returns:
+        The boxed contents stripped of surrounding whitespace, or None.
+    """
+    boxed_start_idx = text.rfind(r"\boxed")
+    if boxed_start_idx == -1:
+        return None
+
+    current_idx = boxed_start_idx + len(r"\boxed")
+
+    while current_idx < len(text) and text[current_idx].isspace():
+        current_idx += 1
+
+    if current_idx >= len(text) or text[current_idx] != "{":
+        return None
+
+    current_idx += 1
+    brace_depth = 1
+    content_start_idx = current_idx
+
+    while current_idx < len(text) and brace_depth > 0:
+        char = text[current_idx]
+        if char == "{":
+            brace_depth += 1
+        elif char == "}":
+            brace_depth -= 1
+        current_idx += 1
+
+    if brace_depth != 0:
+        return None
+
+    return text[content_start_idx:current_idx-1].strip()
+
+
+def _rescue(text: str, fallback: str | None) -> str | None:
+    """Applies the lenient rule where the strict one found nothing.
+
+    Args:
+        text: The full sampled solution.
+        fallback: The mode to apply, or None for boxed-only strictness.
+
+    Returns:
+        The rescued answer, or None when the mode is None or nothing
+        matched.
+
+    Raises:
+        ValueError: If `fallback` is neither None nor a known mode. This is
+            checked before the text is searched, so a misspelled mode fails
+            on every sample rather than only on those holding no number.
+    """
+    if fallback is None:
+        return None
+
+    if fallback not in _FALLBACK_MODES:
+        raise ValueError(
+            f"unknown fallback mode {fallback!r}: expected None (boxed-only) "
+            f"or one of {', '.join(map(repr, _FALLBACK_MODES))}")
+
+    numbers = _NUMBER_RE.findall(text)
+    if not numbers:
+        return None
+    return numbers[-1].replace(",", "")
 
 
 def verify_answer(candidate: str | None, ground_truth: str) -> bool:
