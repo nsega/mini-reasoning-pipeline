@@ -17,6 +17,10 @@ class TestVoting:
         for _ in range(5):
             assert self_consistency_vote(["1", "2"]) == a
 
+    def test_first_seen_wins_the_tiebreak(self):
+        assert self_consistency_vote(["1", "2"]) == "1"
+        assert self_consistency_vote(["2", "1"]) == "2"
+
     def test_none_excluded_before_voting(self):
         # The policy change the lab paid 12 accuracy points to learn:
         # None must never out-vote a present correct answer.
@@ -26,3 +30,7 @@ class TestVoting:
     def test_empty_input_is_loud(self):
         with pytest.raises(ValueError):
             self_consistency_vote([])
+
+    def test_all_none_is_loud(self):
+        with pytest.raises(ValueError):
+            self_consistency_vote([None, None])
