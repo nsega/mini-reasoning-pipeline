@@ -102,6 +102,27 @@ The None filter runs twice — once inside `self_consistency_vote` by module pol
 **Pinned by.**
 `test_parseability_gate_precedes_ranking` — a composite of a gate that rejects a candidate and an adversarial later stage that returns `+inf` for everything still scores that candidate `-inf`; the gate's veto survives a stage built to break it.
 
+## What LogprobRank returns
+
+**Decision.**
+`LogprobRank` scores each candidate with the number of candidates strictly below it by logprob summary: 0 for the lowest, `n - 1` for the highest when nothing ties, and equal scores for equal summaries. A missing summary raises `ValueError` rather than being read as a low rank.
+
+**Rejected.**
+Returning the raw logprob summary as the score. It preserves how far apart candidates are, but the values are unbounded below, so a candidate at -50 swamps any vote-agreement count under the composite's sum and the stage cannot be reasoned about beside its peers. [Composition and the veto](#composition-and-the-veto) already accepts that cost in the positive direction ("a stage returning a large positive number cannot be reasoned about independently of the gate"); this is the same problem mirrored.
+Min-max normalising the summaries into [0, 1]. Bounded, and it keeps relative spacing, but an all-equal set divides by zero and a single degenerate outlier flattens every other candidate into a narrow band.
+Scoring a missing summary as the lowest rank. It would let a run that never computed the summaries produce a plausible-looking ranking, which is the silent failure the loud-error policy exists to prevent.
+
+**Evidence.**
+(1) The stage exists to be composed. The lab's verdict is gate, then rank, then vote agreement, so this stage's output is summed with a vote-agreement count bounded by the set size; commensurate scales are what make that sum mean anything.
+(2) Ties scoring equally follows from the positional contract. Two candidates with identical summaries differ only in where they sit in the list, so letting position decide would make the caller's argmax prefer an earlier candidate for no reason. This is the opposite of `self_consistency_vote`, which must break ties because it returns a winner rather than a score.
+(3) The class docstring already required the summary to be present; the raise is what makes that enforceable rather than aspirational, and `evaluate` is the one place that builds it (audit row 7).
+
+**Cost accepted.**
+The size of the gap is discarded: a candidate far ahead on logprob scores exactly one more than the runner-up. That is deliberate rather than merely tolerated, because the lab measured per-token logprob scoring over-selecting degenerate fluency, so a wide logprob margin is not evidence this design wants to amplify.
+
+**Pinned by.**
+`TestLogprobRank` in `tests/test_scorers.py`: ranking by summary, ties scoring equally, and a missing summary raising. Nothing pinned this stage before, it being the one scorer the committed contract tests never reached.
+
 ## Three roles, one verifier
 
 **Decision.**
