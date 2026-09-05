@@ -16,7 +16,8 @@ class TestAdvantages:
         assert adv.std().item() == pytest.approx(1.0, abs=1e-2)
 
     def test_per_group_normalization(self):
-        rewards = torch.tensor([[1.0, 2.0, 3.0, 4.0], [100.0, 200.0, 300.0, 400.0]])
+        rewards = torch.tensor([[1.0, 2.0, 3.0, 4.0],
+                                [100.0, 200.0, 300.0, 400.0]])
         adv = group_relative_advantages(rewards)
         assert torch.allclose(adv[0], adv[1], atol=1e-4)
 
@@ -77,6 +78,13 @@ class TestZeroVariance:
         assert torch.equal(adv[0], torch.zeros(3))
         assert torch.allclose(adv[1], torch.tensor([-1.0, 0.0, 1.0]),
                               atol=1e-5)
+
+    def test_flat_group_of_inexact_floats_is_still_exact_zeros(self):
+        # Seven copies of 0.1 do not sum to 0.7 in float32, so their std is
+        # ~1e-8 rather than 0. Flatness must be judged on the rewards
+        # themselves, not on a std that rounding can lift off zero.
+        adv = group_relative_advantages(torch.full((7,), 0.1))
+        assert torch.equal(adv, torch.zeros(7))
 
     def test_flat_group_yields_no_update(self):
         # End to end, rewards to gradient: an all-same-reward group must
