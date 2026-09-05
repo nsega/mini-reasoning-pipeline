@@ -24,6 +24,8 @@ docs/design-notes.md.
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
+from mini_reasoning import verifier
+
 REJECTED = float("-inf")
 
 
@@ -50,19 +52,36 @@ class Scorer(Protocol):
 
 @dataclass(frozen=True)
 class ParseabilityGate:
-    """REJECTED for any candidate no answer can be extracted from, 0.0 otherwise."""
+    """REJECTED where no answer can be extracted, 0.0 everywhere else."""
     fallback: str | None = None    # boxed-only unless the caller says otherwise
 
     def score(self, candidates: Sequence[Candidate]) -> list[float]:
-        raise NotImplementedError
+        return [
+            REJECTED
+            if verifier.extract_final_candidate(c.text, self.fallback) is None
+            else 0.0
+            for c in candidates
+        ]
 
 
 @dataclass(frozen=True)
 class LogprobRank:
-    """Ranks by the precomputed logprob summary. Requires it to be present."""
+    """Ranks by the precomputed logprob summary. Requires it to be present.
+
+    A candidate scores the number of candidates strictly below it, so the
+    scale is bounded by the set size and stays commensurate with vote
+    agreement under the composite's sum. Equal summaries score equally,
+    since nothing distinguishes them but position.
+    """
 
     def score(self, candidates: Sequence[Candidate]) -> list[float]:
-        raise NotImplementedError
+        summaries = [c.logprob_summary for c in candidates]
+        if any(s is None for s in summaries):
+            raise ValueError(
+                "LogprobRank needs a logprob summary for every candidate; "
+                "the caller computes it when building the material")
+        return [float(sum(other < s for other in summaries))
+                for s in summaries]
 
 
 @dataclass(frozen=True)
@@ -76,7 +95,12 @@ class VoteAgreement:
     fallback: str | None = None    # boxed-only unless the caller says otherwise
 
     def score(self, candidates: Sequence[Candidate]) -> list[float]:
-        raise NotImplementedError
+        answers = [verifier.extract_final_candidate(c.text, self.fallback)
+                   for c in candidates]
+        # None agrees with nothing: pooling failed extractions on one key is
+        # the failure self_consistency_vote excludes them to avoid.
+        return [0.0 if a is None else float(answers.count(a) - 1)
+                for a in answers]
 
 
 @dataclass(frozen=True)
@@ -85,4 +109,13 @@ class Composite:
     stages: tuple[Scorer, ...]
 
     def score(self, candidates: Sequence[Candidate]) -> list[float]:
-        raise NotImplementedError
+        totals = [0.0] * len(candidates)
+        for stage in self.stages:
+            for i, value in enumerate(stage.score(candidates)):
+                # REJECTED is absorbing by rule, not by arithmetic: summing
+                # it with a stage returning +inf would give nan.
+                if totals[i] == REJECTED or value == REJECTED:
+                    totals[i] = REJECTED
+                else:
+                    totals[i] += value
+        return totals
