@@ -7,10 +7,12 @@
 > rejected, and the evidence for each.
 >
 > Provenance: the scorer interface is the capstone's closed-book
-> constraint, so every decision recorded here is self-written with one
-> exception. The section skeleton was scaffolded; the content is Naoki's.
-> The exception is *The fallback contract*, drafted with Claude while the
-> verifier was implemented, from options Claude proposed and Naoki accepted.
+> constraint, so every decision recorded here is self-written with two
+> exceptions. The section skeleton was scaffolded; the content is Naoki's.
+> The exceptions are *The fallback contract*, drafted with Claude while the
+> verifier was implemented, and the two `grpo.py` sections, drafted with
+> Claude while that module was implemented, each from options Claude
+> proposed and Naoki accepted.
 
 ## One interface or two
 
@@ -164,6 +166,48 @@ The mode is a bare string rather than an enum, so the three call sites can still
 
 **Pinned by.**
 `TestFallbackContract` in `tests/test_verifier.py`: a boxed answer wins over the rescue, no number stays None, the last number wins, a sign and a decimal point survive, a truncated box is rescued under a mode and stays None under the default, an empty box is not an answer, and an unknown mode raises on every input. The committed `test_fallback_rescues_bare_number` continues to pin only that some non-None mode exists.
+
+## What group_relative_advantages calls flat
+
+**Decision.**
+A group is flat when every reward in it equals the first, compared exactly on the rewards themselves, and a flat group returns exact zeros. Every other group returns `(r - mean) / (std + eps)` with the unbiased std along the last axis, which is the group axis. A group axis shorter than two raises `ValueError`, because the n-1 divisor makes a group of one NaN rather than zero.
+
+**Rejected.**
+Judging flatness from the std being zero. Seven copies of 0.1 do not sum to 0.7 in float32, so their std is near 1e-8 rather than 0, and the epsilon then turns rounding noise into an advantage of -0.41 on every rollout. Seven is the default `--n-samples`, and the group sizes the committed tests use (3 and 4) happen not to show it.
+Judging flatness by a tolerance on the std. It replaces one unmeasured constant with another, and a narrow but real spread of rewards under the tolerance would be zeroed with nothing turning red.
+Raising on a flat group. The trainer steps through them, and with a binary reward they are the common case: a problem the policy gets entirely wrong or entirely right.
+
+**Evidence.**
+(1) The probe that found it: constant groups of 0.1, 0.3, 0.7 and 1/3 all have a nonzero float32 std at n = 7 and an exactly zero one at n = 3 and n = 4, so the hazard is invisible at the group sizes the committed tests use and present at the default.
+(2) What a wrong answer does to training. Advantages of -0.41 on every rollout are not noise around zero but a uniform push down on every logprob in the group, so each all-same-reward problem would lower the policy's probability on its own samples. With no KL term (the no-KL default the module docstring records), nothing else acts on that step, so the exact zero is the whole of what keeps it inert.
+(3) The reward role's type is binary ([Three roles, one verifier](#three-roles-one-verifier)), and 0 and 1 are exact in float32, so the pipeline as committed never triggers this. A shaped or partial-credit reward would, which is the swap the trainer harness owns.
+
+**Cost accepted.**
+Exact comparison means a group whose rewards differ only by floating-point noise is not flat and is normalised: two rewards that differ at 1e-7 produce advantages of order one. Binary and rational rewards never do this. A reward computed through floating-point arithmetic would need rounding by the harness before it is grouped, and this document is where that rule lives.
+
+**Pinned by.**
+`test_flat_group_of_inexact_floats_is_still_exact_zeros` in `tests/test_grpo.py`, written against the std-based check and watched failing at -0.41 before the fix. `test_flat_group_does_not_poison_its_batch` pins that the mask is per row, and `test_flat_group_yields_no_update` pins the end-to-end consequence: a flat group produces exactly zero gradient. The committed `test_zero_variance_is_exact_zeros` passes under either check, which is why it did not catch this.
+
+## What grpo_loss reduces over
+
+**Decision.**
+`grpo_loss` returns the mean of `-advantage * logprob` over every element it is handed, as a 0-dim tensor for gradient descent, with the advantages detached inside. The gradient on each logprob is therefore `-advantage / n`, where n counts every element in the call.
+
+**Rejected.**
+The sum. The gradient magnitude then scales with the group size, so changing `--n-samples` changes the effective learning rate for no reason. The trainer clips to norm 1.0 and measured pre-clip norms at 260 to 400 times the bound, so a sum would mostly be clipped away, but it would tie the pre-clip norm to n and hide the change behind the clip.
+A per-group mean summed over groups. It differs from the plain mean by a constant equal to the number of groups, which is the same objection.
+A per-token mean. This module receives one sequence logprob per rollout; how that scalar is built from token logprobs is the harness's decision, and row 6 of the audit already places it there.
+
+**Evidence.**
+(1) The gradient is linear in the advantage and independent of the logprob's value, so the reduction is the only thing that sets its scale.
+(2) The direction is fixed by the committed `test_descent_direction`: descending the loss raises the logprob of a positive-advantage rollout.
+(3) The advantages are detached because they are a function of the rewards, not of the policy, and the committed `test_advantages_detached` pins that no gradient reaches them.
+
+**Cost accepted.**
+The mean sees only what it is handed. A harness that accumulates backward per rollout, which is the lab's memory lesson, calls this function with one element at a time and so gets a sum across the group unless it scales each call by 1/G itself. That scaling lives at the trainer, alongside the clip, and this document is where the rule is recorded.
+
+**Pinned by.**
+`test_loss_is_the_mean_of_negative_weighted_logprobs` (-0.5, where a sum gives -1.0), `test_gradient_is_minus_advantage_over_n`, and the two scalar tests `test_loss_is_a_scalar` and `test_batched_rollouts_reduce_to_one_scalar`, all in `tests/test_grpo.py`.
 
 ## Forensics: obligation or convention
 
