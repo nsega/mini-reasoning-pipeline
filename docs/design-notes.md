@@ -7,7 +7,7 @@
 > rejected, and the evidence for each.
 >
 > Provenance: the scorer interface is the capstone's closed-book
-> constraint, so every decision recorded here is self-written with two
+> constraint, so every decision recorded here is self-written with three
 > exceptions. The section skeleton was scaffolded; the content is Naoki's.
 > The exceptions are *The fallback contract*, drafted with Claude while the
 > verifier was implemented, and the two `grpo.py` sections, drafted with
@@ -170,7 +170,7 @@ The mode is a bare string rather than an enum, so the three call sites can still
 ## What group_relative_advantages calls flat
 
 **Decision.**
-A group is flat when every reward in it equals the first, compared exactly on the rewards themselves, and a flat group returns exact zeros. Every other group returns `(r - mean) / (std + eps)` with the unbiased std along the last axis, which is the group axis. A group axis shorter than two raises `ValueError`, because the n-1 divisor makes a group of one NaN rather than zero. A bool or integer reward tensor is cast to float on entry, because `verify_answer` returns `bool` and the tensor a harness builds straight from its verdicts is `torch.bool`, on which `torch.mean` raises.
+A group is flat when every reward in it equals the first, compared exactly on the rewards themselves, and a flat group returns exact zeros. Every other group returns `(r - mean) / (std + eps)` with the unbiased std along the last axis, which is the group axis. A group axis shorter than two raises `ValueError`, because the n-1 divisor makes a group of one NaN rather than zero. Every input is normalised in float32 whatever its dtype: `verify_answer` returns `bool`, so the tensor a harness builds straight from its verdicts is `torch.bool`, on which `torch.mean` raises, and float16 cannot represent the epsilon at all, so a near-flat half group would divide by zero. A NaN or infinite reward, an empty batch, and a 0-dim tensor each raise `ValueError` rather than pass through: NaN is never equal to itself, so a group holding one is never flat and would come out all-NaN, and the loss's global mean would then spread that NaN across every row's gradient.
 
 **Rejected.**
 Judging flatness from the std being zero. Seven copies of 0.1 do not sum to 0.7 in float32, so their std is near 1e-8 rather than 0, and the epsilon then turns rounding noise into an advantage of -0.41 on every rollout. Seven is the default `--n-samples`, and the group sizes the committed tests use (3 and 4) happen not to show it.
@@ -186,7 +186,7 @@ Raising on a flat group. The trainer steps through them, and with a binary rewar
 Exact comparison means a group whose rewards differ only by floating-point noise is not flat and is normalised: two rewards that differ at 1e-7 produce advantages of order one. Binary and rational rewards never do this. A reward computed through floating-point arithmetic would need rounding by the harness before it is grouped, and this document is where that rule lives.
 
 **Pinned by.**
-`test_flat_group_of_inexact_floats_is_still_exact_zeros` in `tests/test_grpo.py`, written against the std-based check and watched failing at -0.41 before the fix. `test_flat_group_does_not_poison_its_batch` pins that the mask is per row, and `test_flat_group_yields_no_update` pins the end-to-end consequence: a flat group produces exactly zero gradient. The committed `test_zero_variance_is_exact_zeros` passes under either check, which is why it did not catch this. `TestRewardDtype` pins the cast: bool and integer groups normalise to the same float advantages as their float equivalents, and a flat bool group is exact float zeros. It was added after a code review of the PR found that every earlier test passed float rewards only.
+`test_flat_group_of_inexact_floats_is_still_exact_zeros` in `tests/test_grpo.py`, written against the std-based check and watched failing at -0.41 before the fix. `test_flat_group_does_not_poison_its_batch` pins that the mask is per row, and `test_flat_group_yields_no_update` pins the end-to-end consequence: a flat group produces exactly zero gradient. The committed `test_zero_variance_is_exact_zeros` passes under either check, which is why it did not catch this. `TestRewardDtype` pins the cast: bool and integer groups normalise to the same float advantages as their float equivalents, and a flat bool group is exact float zeros. It was added after a code review of the PR found that every earlier test passed float rewards only. `TestRewardGuards` pins the four loud failures (NaN, inf, an empty batch, a 0-dim input) and that a float16 group normalises finitely in float32; the same review found each of them.
 
 ## What grpo_loss reduces over
 
@@ -194,9 +194,9 @@ Exact comparison means a group whose rewards differ only by floating-point noise
 `grpo_loss` returns the mean of `-advantage * logprob` over every element it is handed, as a 0-dim tensor for gradient descent, with the advantages detached inside. The gradient on each logprob is therefore `-advantage / n`, where n counts every element in the call.
 
 **Rejected.**
-The sum. The gradient magnitude then scales with the group size, so changing `--n-samples` changes the effective learning rate for no reason. The trainer clips to norm 1.0 and measured pre-clip norms at 260 to 400 times the bound, so a sum would mostly be clipped away, but it would tie the pre-clip norm to n and hide the change behind the clip.
+The sum. The gradient magnitude then scales with the group size, so changing `--n-samples` changes the effective learning rate for no reason. The trainer clips the gradient norm, and the pre-clip norms it measured (the figure the module docstring records) sit far above the bound, so a sum would mostly be clipped away, but it would tie the pre-clip norm to n and hide the change behind the clip.
 A per-group mean summed over groups. It differs from the plain mean by a constant equal to the number of groups, which is the same objection.
-A per-token mean. This module receives one sequence logprob per rollout; how that scalar is built from token logprobs is the harness's decision, and row 6 of the audit already places it there.
+A per-token mean. This module receives one sequence logprob per rollout and takes it as given; whether that scalar is a token sum or a token mean is the harness's decision, nothing in this repo yet records which, and the module docstring's list of harness lessons names the choice and the 1/T it puts on the gradient scale.
 
 **Evidence.**
 (1) The gradient is linear in the advantage and independent of the logprob's value, so the reduction is the only thing that sets its scale.
@@ -207,7 +207,7 @@ A per-token mean. This module receives one sequence logprob per rollout; how tha
 The mean sees only what it is handed. A harness that accumulates backward per rollout, which is the lab's memory lesson, calls this function with one element at a time and so gets a sum across the group unless it scales each call by 1/G itself. That scaling lives at the trainer, alongside the clip, and this document is where the rule is recorded.
 
 **Pinned by.**
-`test_loss_is_the_mean_of_negative_weighted_logprobs` (-0.5, where a sum gives -1.0), `test_gradient_is_minus_advantage_over_n`, and the two scalar tests `test_loss_is_a_scalar` and `test_batched_rollouts_reduce_to_one_scalar`, all in `tests/test_grpo.py`.
+`test_loss_is_the_mean_of_negative_weighted_logprobs` (-0.5, where a sum gives -1.0), `test_gradient_is_minus_advantage_over_n`, and the two scalar tests `test_loss_is_a_scalar` and `test_batched_rollouts_reduce_to_one_scalar`, all in `tests/test_grpo.py`. `TestLossShapeMismatch` pins that a (G, 1) column against a (G,) row raises rather than broadcasting to an outer product, and `TestLossGuards` that empty inputs raise rather than returning a NaN mean; the PR's code review found both.
 
 ## Forensics: obligation or convention
 
