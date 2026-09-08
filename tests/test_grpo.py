@@ -156,3 +156,40 @@ class TestLossShapeMismatch:
         # for every row of the batch.
         with pytest.raises(ValueError):
             grpo_loss(torch.full((2, 3), -1.0), torch.zeros(3))
+
+
+class TestRewardGuards:
+    def test_nan_reward_raises(self):
+        # NaN is never equal to itself, so a group holding one is never
+        # flat and would come out all-NaN, then poison the batch mean.
+        with pytest.raises(ValueError):
+            group_relative_advantages(torch.tensor([0.0, 1.0, float("nan")]))
+
+    def test_inf_reward_raises(self):
+        with pytest.raises(ValueError):
+            group_relative_advantages(torch.tensor([1.0, float("inf"), 1.0]))
+
+    def test_empty_batch_raises(self):
+        # (0, 7) passes a last-axis check; the mean over nothing is NaN.
+        with pytest.raises(ValueError):
+            group_relative_advantages(torch.zeros(0, 7))
+
+    def test_zero_dim_reward_raises_value_error(self):
+        # A single verdict passed unwrapped: the documented error, not an
+        # IndexError from indexing an empty shape.
+        with pytest.raises(ValueError):
+            group_relative_advantages(torch.tensor(1.0))
+
+    def test_half_rewards_normalise_in_float32(self):
+        # 1e-8 rounds to 0 in float16, so the epsilon is a no-op there and
+        # a near-flat half group divides by zero.
+        rewards = torch.tensor([0, 6e-8, 0, 0, 0, 0, 0], dtype=torch.float16)
+        adv = group_relative_advantages(rewards)
+        assert adv.dtype == torch.float32
+        assert torch.isfinite(adv).all()
+
+
+class TestLossGuards:
+    def test_empty_inputs_raise(self):
+        with pytest.raises(ValueError):
+            grpo_loss(torch.zeros(0), torch.zeros(0))
