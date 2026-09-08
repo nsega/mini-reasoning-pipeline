@@ -207,7 +207,7 @@ A per-token mean. This module receives one sequence logprob per rollout and take
 The mean sees only what it is handed. A harness that accumulates backward per rollout, which is the lab's memory lesson, calls this function with one element at a time and so gets a sum across the group unless it scales each call by 1/G itself. That scaling lives at the trainer, alongside the clip, and this document is where the rule is recorded.
 
 **Pinned by.**
-`test_loss_is_the_mean_of_negative_weighted_logprobs` (-0.5, where a sum gives -1.0), `test_gradient_is_minus_advantage_over_n`, and the two scalar tests `test_loss_is_a_scalar` and `test_batched_rollouts_reduce_to_one_scalar`, all in `tests/test_grpo.py`. `TestLossShapeMismatch` pins that a (G, 1) column against a (G,) row raises rather than broadcasting to an outer product, and `TestLossGuards` that empty inputs raise rather than returning a NaN mean; the PR's code review found both.
+`test_loss_is_the_mean_of_negative_weighted_logprobs` (-0.5, where a sum gives -1.0), `test_gradient_is_minus_advantage_over_n`, and `test_batched_rollouts_reduce_to_one_scalar`, all in `tests/test_grpo.py`. `TestLossShapeMismatch` pins that a (G, 1) column against a (G,) row raises rather than broadcasting to an outer product, and `TestLossGuards` that empty inputs raise rather than returning a NaN mean; the PR's code review found both.
 
 ## Forensics: obligation or convention
 

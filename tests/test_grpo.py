@@ -47,14 +47,16 @@ class TestLoss:
 
 
 class TestGroupAxis:
+    """The last axis is the group, and the output keeps the input shape."""
+
     def test_shape_is_preserved(self):
         rewards = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         assert group_relative_advantages(rewards).shape == rewards.shape
 
     def test_each_row_normalises_against_its_own_row(self):
-        # Hand-derived: each row has mean 0.5 and unbiased std sqrt(1/3),
-        # so both rows land on the same +-0.866 pattern. A global mean or a
-        # global std would put row 1 far from it.
+        """Each row has mean 0.5 and unbiased std sqrt(1/3), so both rows
+        land on the same +-0.866 pattern; a global mean or a global std
+        would put row 1 far from it."""
         rewards = torch.tensor([[0.0, 1.0, 1.0, 0.0],
                                 [100.0, 101.0, 101.0, 100.0]])
         want = torch.tensor([[-0.866, 0.866, 0.866, -0.866]] * 2)
@@ -62,17 +64,19 @@ class TestGroupAxis:
                               atol=1e-3)
 
     def test_group_of_one_raises_in_a_batch_too(self):
-        # The guard is on the group axis, not on the element count: two
-        # groups of one is still a group of one.
+        """The guard is on the group axis, not the element count: two
+        groups of one is still a group of one."""
         with pytest.raises(ValueError):
             group_relative_advantages(torch.tensor([[2.0], [3.0]]))
 
 
 class TestZeroVariance:
+    """A flat group is exact zeros, judged on the rewards, not the std."""
+
     def test_flat_group_does_not_poison_its_batch(self):
-        # The trainer steps through zero-variance groups inside a batch: the
-        # flat row must be exact zeros while the live row normalises as if
-        # it were alone ([0, 1, 2] has mean 1 and unbiased std 1).
+        """The trainer steps through zero-variance groups inside a batch:
+        the flat row must be exact zeros while the live row normalises
+        as if alone ([0, 1, 2] has mean 1 and unbiased std 1)."""
         rewards = torch.tensor([[1.0, 1.0, 1.0], [0.0, 1.0, 2.0]])
         adv = group_relative_advantages(rewards)
         assert torch.equal(adv[0], torch.zeros(3))
@@ -80,16 +84,16 @@ class TestZeroVariance:
                               atol=1e-5)
 
     def test_flat_group_of_inexact_floats_is_still_exact_zeros(self):
-        # Seven copies of 0.1 do not sum to 0.7 in float32, so their std is
-        # ~1e-8 rather than 0. Flatness must be judged on the rewards
-        # themselves, not on a std that rounding can lift off zero.
+        """Seven copies of 0.1 do not sum to 0.7 in float32, so their std
+        is ~1e-8 rather than 0. Flatness must be judged on the rewards
+        themselves, not on a std that rounding can lift off zero."""
         adv = group_relative_advantages(torch.full((7,), 0.1))
         assert torch.equal(adv, torch.zeros(7))
 
     def test_flat_group_yields_no_update(self):
-        # End to end, rewards to gradient: an all-same-reward group must
-        # move the policy by exactly nothing. With no KL term this is the
-        # only thing that keeps zero-advantage steps inert.
+        """End to end, rewards to gradient: an all-same-reward group must
+        move the policy by exactly nothing. With no KL term this is the
+        only thing that keeps zero-advantage steps inert."""
         logprobs = torch.tensor([-0.5, -1.0, -1.5], requires_grad=True)
         adv = group_relative_advantages(torch.tensor([1.0, 1.0, 1.0]))
         grpo_loss(logprobs, adv).backward()
@@ -97,22 +101,20 @@ class TestZeroVariance:
 
 
 class TestLossValue:
-    def test_loss_is_a_scalar(self):
-        loss = grpo_loss(torch.tensor([-1.0, -2.0]), torch.tensor([1.0, -1.0]))
-        assert loss.dim() == 0
+    """The loss is a scalar mean, so the gradient is -advantage / n."""
 
     def test_batched_rollouts_reduce_to_one_scalar(self):
         loss = grpo_loss(torch.full((2, 3), -1.0), torch.zeros(2, 3))
         assert loss.dim() == 0
 
     def test_loss_is_the_mean_of_negative_weighted_logprobs(self):
-        # Mean, not sum: -((1)(-1) + (-1)(-2)) / 2 = -0.5. A sum would give
-        # -1.0 and make the step size grow with the group.
+        """Mean, not sum: -((1)(-1) + (-1)(-2)) / 2 = -0.5. A sum would
+        give -1.0 and make the step size grow with the group."""
         loss = grpo_loss(torch.tensor([-1.0, -2.0]), torch.tensor([1.0, -1.0]))
         assert loss.item() == pytest.approx(-0.5)
 
     def test_gradient_is_minus_advantage_over_n(self):
-        # d(loss)/d(logprob_i) = -A_i / n, independent of the logprob value.
+        """d(loss)/d(logprob_i) = -A_i / n, independent of the logprob."""
         logprobs = torch.tensor([-1.0, -1.0, -1.0, -1.0], requires_grad=True)
         grpo_loss(logprobs, torch.tensor([2.0, -2.0, 1.0, -1.0])).backward()
         assert torch.allclose(logprobs.grad,
@@ -120,9 +122,10 @@ class TestLossValue:
 
 
 class TestRewardDtype:
-    # verify_answer returns bool, so the tensor a harness builds straight
-    # from it is torch.bool (or long, after a sum). Hand-derived for
-    # [1, 0, 1, 1]: mean 0.75, unbiased std 0.5, so +-0.25 / 0.5.
+    """verify_answer returns bool, so the tensor a harness builds straight
+    from it is torch.bool (or long, after a sum). Hand-derived for
+    [1, 0, 1, 1]: mean 0.75, unbiased std 0.5, so +-0.25 / 0.5."""
+
     WANT = torch.tensor([0.5, -1.5, 0.5, 0.5])
 
     def test_bool_rewards_normalise_as_floats(self):
@@ -143,25 +146,30 @@ class TestRewardDtype:
 
 
 class TestLossShapeMismatch:
+    """Mismatched shapes raise instead of broadcasting to a wrong loss."""
+
     def test_column_logprobs_against_flat_advantages_raise(self):
-        # (G, 1) against (G,) would broadcast to an outer product and give
-        # every rollout the mean advantage's gradient, with no error. A
-        # keepdim sum over tokens is exactly how a harness makes a column.
+        """(G, 1) against (G,) would broadcast to an outer product and
+        give every rollout the mean advantage's gradient, with no error.
+        A keepdim sum over tokens is exactly how a harness makes a
+        column."""
         logprobs = torch.tensor([[-1.0], [-2.0], [-3.0]], requires_grad=True)
         with pytest.raises(ValueError):
             grpo_loss(logprobs, torch.tensor([1.0, 2.0, 3.0]))
 
     def test_batch_logprobs_against_one_group_of_advantages_raise(self):
-        # (B, G) against (G,) would silently reuse one group's advantages
-        # for every row of the batch.
+        """(B, G) against (G,) would silently reuse one group's advantages
+        for every row of the batch."""
         with pytest.raises(ValueError):
             grpo_loss(torch.full((2, 3), -1.0), torch.zeros(3))
 
 
 class TestRewardGuards:
+    """Inputs that would produce NaN or the wrong error fail loudly."""
+
     def test_nan_reward_raises(self):
-        # NaN is never equal to itself, so a group holding one is never
-        # flat and would come out all-NaN, then poison the batch mean.
+        """NaN is never equal to itself, so a group holding one is never
+        flat and would come out all-NaN, then poison the batch mean."""
         with pytest.raises(ValueError):
             group_relative_advantages(torch.tensor([0.0, 1.0, float("nan")]))
 
@@ -170,19 +178,19 @@ class TestRewardGuards:
             group_relative_advantages(torch.tensor([1.0, float("inf"), 1.0]))
 
     def test_empty_batch_raises(self):
-        # (0, 7) passes a last-axis check; the mean over nothing is NaN.
+        """(0, 7) passes a last-axis check; the mean over nothing is NaN."""
         with pytest.raises(ValueError):
             group_relative_advantages(torch.zeros(0, 7))
 
     def test_zero_dim_reward_raises_value_error(self):
-        # A single verdict passed unwrapped: the documented error, not an
-        # IndexError from indexing an empty shape.
+        """A single verdict passed unwrapped gets the documented error,
+        not an IndexError from indexing an empty shape."""
         with pytest.raises(ValueError):
             group_relative_advantages(torch.tensor(1.0))
 
     def test_half_rewards_normalise_in_float32(self):
-        # 1e-8 rounds to 0 in float16, so the epsilon is a no-op there and
-        # a near-flat half group divides by zero.
+        """1e-8 rounds to 0 in float16, so the epsilon is a no-op there
+        and a near-flat half group divides by zero."""
         rewards = torch.tensor([0, 6e-8, 0, 0, 0, 0, 0], dtype=torch.float16)
         adv = group_relative_advantages(rewards)
         assert adv.dtype == torch.float32
@@ -190,6 +198,8 @@ class TestRewardGuards:
 
 
 class TestLossGuards:
+    """Empty inputs raise rather than returning a NaN mean."""
+
     def test_empty_inputs_raise(self):
         with pytest.raises(ValueError):
             grpo_loss(torch.zeros(0), torch.zeros(0))
