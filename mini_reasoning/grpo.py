@@ -28,12 +28,14 @@ def group_relative_advantages(rewards):
 
     Args:
         rewards: Tensor of shape (..., group_size), one reward per
-            rollout, with the group along the last axis.
+            rollout, with the group along the last axis. A bool or
+            integer tensor, which is what a harness builds straight from
+            the verifier's verdicts, is cast to float first.
 
     Returns:
-        Tensor of the same shape: per group, (r - mean) / (std + eps)
-        with the unbiased std, or exact zeros where the group has no
-        variance.
+        Float tensor of the same shape: per group, (r - mean) / (std +
+        eps) with the unbiased std, or exact zeros where the group has
+        no variance.
 
     Raises:
         ValueError: if the group axis holds fewer than two rollouts.
@@ -44,6 +46,8 @@ def group_relative_advantages(rewards):
     # Flatness is judged on the rewards, not on the std: seven copies of
     # 0.1 have a float32 std near 1e-8, which the epsilon would then turn
     # into O(1) advantages instead of the exact zeros the trainer relies on.
+    if not rewards.is_floating_point():
+        rewards = rewards.float()
     flat = (rewards == rewards[..., :1]).all(dim=-1, keepdim=True)
     mean = rewards.mean(dim=-1, keepdim=True)
     std = rewards.std(dim=-1, keepdim=True)

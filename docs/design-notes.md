@@ -170,7 +170,7 @@ The mode is a bare string rather than an enum, so the three call sites can still
 ## What group_relative_advantages calls flat
 
 **Decision.**
-A group is flat when every reward in it equals the first, compared exactly on the rewards themselves, and a flat group returns exact zeros. Every other group returns `(r - mean) / (std + eps)` with the unbiased std along the last axis, which is the group axis. A group axis shorter than two raises `ValueError`, because the n-1 divisor makes a group of one NaN rather than zero.
+A group is flat when every reward in it equals the first, compared exactly on the rewards themselves, and a flat group returns exact zeros. Every other group returns `(r - mean) / (std + eps)` with the unbiased std along the last axis, which is the group axis. A group axis shorter than two raises `ValueError`, because the n-1 divisor makes a group of one NaN rather than zero. A bool or integer reward tensor is cast to float on entry, because `verify_answer` returns `bool` and the tensor a harness builds straight from its verdicts is `torch.bool`, on which `torch.mean` raises.
 
 **Rejected.**
 Judging flatness from the std being zero. Seven copies of 0.1 do not sum to 0.7 in float32, so their std is near 1e-8 rather than 0, and the epsilon then turns rounding noise into an advantage of -0.41 on every rollout. Seven is the default `--n-samples`, and the group sizes the committed tests use (3 and 4) happen not to show it.
@@ -186,7 +186,7 @@ Raising on a flat group. The trainer steps through them, and with a binary rewar
 Exact comparison means a group whose rewards differ only by floating-point noise is not flat and is normalised: two rewards that differ at 1e-7 produce advantages of order one. Binary and rational rewards never do this. A reward computed through floating-point arithmetic would need rounding by the harness before it is grouped, and this document is where that rule lives.
 
 **Pinned by.**
-`test_flat_group_of_inexact_floats_is_still_exact_zeros` in `tests/test_grpo.py`, written against the std-based check and watched failing at -0.41 before the fix. `test_flat_group_does_not_poison_its_batch` pins that the mask is per row, and `test_flat_group_yields_no_update` pins the end-to-end consequence: a flat group produces exactly zero gradient. The committed `test_zero_variance_is_exact_zeros` passes under either check, which is why it did not catch this.
+`test_flat_group_of_inexact_floats_is_still_exact_zeros` in `tests/test_grpo.py`, written against the std-based check and watched failing at -0.41 before the fix. `test_flat_group_does_not_poison_its_batch` pins that the mask is per row, and `test_flat_group_yields_no_update` pins the end-to-end consequence: a flat group produces exactly zero gradient. The committed `test_zero_variance_is_exact_zeros` passes under either check, which is why it did not catch this. `TestRewardDtype` pins the cast: bool and integer groups normalise to the same float advantages as their float equivalents, and a flat bool group is exact float zeros. It was added after a code review of the PR found that every earlier test passed float rewards only.
 
 ## What grpo_loss reduces over
 

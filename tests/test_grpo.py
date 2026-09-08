@@ -117,3 +117,26 @@ class TestLossValue:
         grpo_loss(logprobs, torch.tensor([2.0, -2.0, 1.0, -1.0])).backward()
         assert torch.allclose(logprobs.grad,
                               torch.tensor([-0.5, 0.5, -0.25, 0.25]))
+
+
+class TestRewardDtype:
+    # verify_answer returns bool, so the tensor a harness builds straight
+    # from it is torch.bool (or long, after a sum). Hand-derived for
+    # [1, 0, 1, 1]: mean 0.75, unbiased std 0.5, so +-0.25 / 0.5.
+    WANT = torch.tensor([0.5, -1.5, 0.5, 0.5])
+
+    def test_bool_rewards_normalise_as_floats(self):
+        adv = group_relative_advantages(
+            torch.tensor([True, False, True, True]))
+        assert adv.dtype.is_floating_point
+        assert torch.allclose(adv, self.WANT, atol=1e-5)
+
+    def test_integer_rewards_normalise_as_floats(self):
+        adv = group_relative_advantages(torch.tensor([1, 0, 1, 1]))
+        assert adv.dtype.is_floating_point
+        assert torch.allclose(adv, self.WANT, atol=1e-5)
+
+    def test_flat_bool_group_is_exact_float_zeros(self):
+        adv = group_relative_advantages(torch.tensor([True, True, True]))
+        assert adv.dtype.is_floating_point
+        assert torch.equal(adv, torch.zeros(3))
