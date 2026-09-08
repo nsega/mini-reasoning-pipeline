@@ -140,3 +140,19 @@ class TestRewardDtype:
         adv = group_relative_advantages(torch.tensor([True, True, True]))
         assert adv.dtype.is_floating_point
         assert torch.equal(adv, torch.zeros(3))
+
+
+class TestLossShapeMismatch:
+    def test_column_logprobs_against_flat_advantages_raise(self):
+        # (G, 1) against (G,) would broadcast to an outer product and give
+        # every rollout the mean advantage's gradient, with no error. A
+        # keepdim sum over tokens is exactly how a harness makes a column.
+        logprobs = torch.tensor([[-1.0], [-2.0], [-3.0]], requires_grad=True)
+        with pytest.raises(ValueError):
+            grpo_loss(logprobs, torch.tensor([1.0, 2.0, 3.0]))
+
+    def test_batch_logprobs_against_one_group_of_advantages_raise(self):
+        # (B, G) against (G,) would silently reuse one group's advantages
+        # for every row of the batch.
+        with pytest.raises(ValueError):
+            grpo_loss(torch.full((2, 3), -1.0), torch.zeros(3))

@@ -68,5 +68,14 @@ def grpo_loss(logprobs, advantages):
     Returns:
         A 0-dim tensor, the mean of -advantage * logprob. Descending it
         raises the log-probability of positive-advantage rollouts.
+
+    Raises:
+        ValueError: if the two shapes differ. Broadcasting a (G, 1)
+            column against a (G,) row would form an outer product and
+            hand every rollout the mean advantage's gradient, silently.
     """
+    if logprobs.shape != advantages.shape:
+        raise ValueError(
+            "logprobs and advantages must have the same shape, got "
+            f"{tuple(logprobs.shape)} and {tuple(advantages.shape)}")
     return -(advantages.detach() * logprobs).mean()
