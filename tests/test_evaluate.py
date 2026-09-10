@@ -8,8 +8,9 @@ report raw and level-reweighted accuracy. Sampling is the one model-bound
 step, so it is injected; scorers and the verifier are real.
 """
 import pytest
+import torch
 
-from mini_reasoning.evaluate import evaluate
+from mini_reasoning.evaluate import evaluate, sequence_logprob_summary
 from mini_reasoning.scorers import (
     REJECTED, Candidate, Composite, ParseabilityGate, VoteAgreement,
 )
@@ -194,3 +195,28 @@ class TestAccuracy:
     def test_no_problems_raise(self):
         with pytest.raises(ValueError):
             evaluate(MODEL, TOKENIZER, [], lenient(), sampler=canned())
+
+
+class TestLogprobSummary:
+    """The summary is the mean token logprob up to and including the
+    first EOS. Positions after it hold -inf from the generation scores,
+    so a multiplicative mask would turn the mean into NaN."""
+
+    def test_no_eos_averages_every_token(self):
+        logprobs = torch.tensor([[-1.0, -2.0, -3.0]])
+        generated = torch.tensor([[5, 6, 7]])
+        got = sequence_logprob_summary(logprobs, generated, eos_id=0)
+        assert got.tolist() == pytest.approx([-2.0])
+
+    def test_eos_is_included_and_padding_after_it_is_not(self):
+        logprobs = torch.tensor([[-1.0, -3.0, float("-inf"), float("-inf")]])
+        generated = torch.tensor([[5, 0, 0, 0]])
+        got = sequence_logprob_summary(logprobs, generated, eos_id=0)
+        assert got.tolist() == pytest.approx([-2.0])
+
+    def test_rows_are_summarised_independently(self):
+        logprobs = torch.tensor([[-1.0, -3.0, float("-inf")],
+                                 [-2.0, -2.0, -2.0]])
+        generated = torch.tensor([[5, 0, 0], [5, 6, 7]])
+        got = sequence_logprob_summary(logprobs, generated, eos_id=0)
+        assert got.tolist() == pytest.approx([-2.0, -2.0])
