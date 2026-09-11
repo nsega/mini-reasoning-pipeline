@@ -20,7 +20,7 @@ README discusses it. The full record is in docs/design-notes.md.
   seed-42 subset skews hard (mean level 3.88 against 3.44 for the full
   set), so the raw number understates the model.
 """
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import torch
 
@@ -46,6 +46,12 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
     chat template made it regurgitate prompts (0 of 3 usable) where the
     plain prompt at temperature 0.7 boxed 3 of 3.
 
+    The summary is taken from the raw logits rather than from the
+    processed scores. The scores have already been divided by the
+    temperature and truncated to the nucleus, so summarising them would
+    rank candidates by the sampling distribution instead of by the
+    model: on one 8-sample probe the two orderings differed.
+
     Args:
         model: A causal LM with generate and compute_transition_scores.
         tokenizer: Its tokenizer.
@@ -58,53 +64,90 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
 
     Returns:
         One Candidate per sample: the decoded text and the mean logprob
-        over its generated tokens, padding excluded.
+        the model assigned to its generated tokens, padding excluded.
     """
+    eos_ids = _eos_ids(model, tokenizer)
     pad_id = tokenizer.pad_token_id
     if pad_id is None:
-        pad_id = tokenizer.eos_token_id
+        pad_id = eos_ids[0]
     inputs = tokenizer(_PROMPT.format(problem=problem), return_tensors="pt")
     inputs = inputs.to(model.device)
     with torch.no_grad():
         out = model.generate(
             **inputs, do_sample=True, temperature=temperature, top_p=top_p,
             num_return_sequences=n, max_new_tokens=max_new_tokens,
-            output_scores=True, return_dict_in_generate=True,
+            output_logits=True, return_dict_in_generate=True,
             pad_token_id=pad_id)
         token_logprobs = model.compute_transition_scores(
-            out.sequences, out.scores, normalize_logits=True)
+            out.sequences, out.logits, normalize_logits=True)
     generated = out.sequences[:, inputs["input_ids"].shape[1]:]
-    summaries = sequence_logprob_summary(token_logprobs, generated,
-                                         tokenizer.eos_token_id)
+    summaries = sequence_logprob_summary(token_logprobs, generated, eos_ids)
     texts = tokenizer.batch_decode(generated, skip_special_tokens=True)
     return [Candidate(text=text, logprob_summary=float(summary))
             for text, summary in zip(texts, summaries)]
 
 
+def _eos_ids(model, tokenizer) -> tuple[int, ...]:
+    """The ids generation actually stops on, as a tuple.
+
+    Taken from the generation config rather than the tokenizer: a chat
+    checkpoint often stops on several ids, and one the tokenizer does
+    not name would leave an early-finished row looking unfinished.
+    """
+    eos = getattr(model.generation_config, "eos_token_id", None)
+    if eos is None:
+        eos = tokenizer.eos_token_id
+    return (eos,) if isinstance(eos, int) else tuple(eos)
+
+
 def sequence_logprob_summary(token_logprobs: torch.Tensor,
                              generated: torch.Tensor,
-                             eos_id: int) -> torch.Tensor:
+                             eos_ids: int | Iterable[int]) -> torch.Tensor:
     """Mean token logprob per row, up to and including the first EOS.
 
-    Positions after the first EOS are padding and carry -inf in the
-    generation scores, so they are excluded by selection rather than by
-    a multiplicative mask, which would turn -inf times zero into NaN. A
-    row with no EOS averages every token.
+    Positions after the first stop token are padding. They can carry
+    -inf, so they are excluded by selection rather than by a
+    multiplicative mask, which would turn -inf times zero into NaN. A
+    row that never stopped averages every token.
 
     Args:
         token_logprobs: Shape (rows, steps), one logprob per generated
             token.
         generated: Shape (rows, steps), the generated token ids.
-        eos_id: The end-of-sequence token id.
+        eos_ids: The id generation stops on, or every such id.
 
     Returns:
         Shape (rows,), the per-row mean.
     """
-    is_eos = generated == eos_id
+    if isinstance(eos_ids, int):
+        eos_ids = (eos_ids,)
+    stops = torch.tensor(tuple(eos_ids), device=generated.device)
+    is_eos = torch.isin(generated, stops)
     finished_before = is_eos.cumsum(-1) - is_eos.int()
     keep = finished_before == 0
     kept = token_logprobs.masked_fill(~keep, 0.0)
     return kept.sum(-1) / keep.sum(-1).clamp(min=1)
+
+
+_REQUIRED_FIELDS = ("unique_id", "problem", "answer", "level")
+
+
+def _validate(problems: Sequence[Mapping]) -> None:
+    """Checks every problem before the sampling loop runs.
+
+    The reweighting looks each level up in MATH-500's counts, so an
+    unknown level would otherwise raise after a whole run of generation
+    and return nothing.
+    """
+    for position, problem in enumerate(problems):
+        missing = [f for f in _REQUIRED_FIELDS if f not in problem]
+        if missing:
+            raise ValueError(
+                f"problem {position} is missing {', '.join(missing)}")
+        if problem["level"] not in MATH500_LEVEL_COUNTS:
+            raise ValueError(
+                f"problem {position} has level {problem['level']!r}, not "
+                f"one of {sorted(MATH500_LEVEL_COUNTS)}")
 
 
 def _select(scores: Sequence[float]) -> int | None:
@@ -152,14 +195,21 @@ def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,
         correctness.
 
     Raises:
-        ValueError: if problems is empty.
+        ValueError: if problems is empty, if any problem lacks a
+            required field or carries a level outside MATH-500's five,
+            or if the sampler returns other than n_samples samples.
     """
     if not problems:
         raise ValueError("evaluate needs at least one problem")
+    _validate(problems)
     records = []
     for problem in problems:
         samples = list(sampler(model, tokenizer, problem["problem"],
                                n_samples))
+        if len(samples) != n_samples:
+            raise ValueError(
+                f"sampler returned {len(samples)} samples for problem "
+                f"{problem['unique_id']!r}, expected {n_samples}")
         candidates = [verifier.extract_final_candidate(s.text, fallback)
                       for s in samples]
         scores = list(scorer.score(samples))

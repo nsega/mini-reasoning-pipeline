@@ -80,10 +80,15 @@ class TestSampling:
                  sampler=sampler)
         assert sampler.calls == [(MODEL, TOKENIZER, "What is 6*7?", 2)]
 
-    def test_n_samples_bounds_the_stored_samples(self):
-        results = evaluate(MODEL, TOKENIZER, [P1], lenient(), n_samples=2,
-                           sampler=canned())
-        assert len(results["records"][0]["samples"]) == 2
+    def test_a_sampler_returning_the_wrong_count_raises(self):
+        """The candidate set is what n_samples names, so a sampler that
+        returns a different count is a bug, not a quietly weaker eval."""
+        def short(model, tokenizer, problem, n):
+            return SAMPLES[problem][:1]
+
+        with pytest.raises(ValueError):
+            evaluate(MODEL, TOKENIZER, [P1], lenient(), n_samples=3,
+                     sampler=short)
 
 
 class TestSelection:
@@ -197,6 +202,27 @@ class TestAccuracy:
             evaluate(MODEL, TOKENIZER, [], lenient(), sampler=canned())
 
 
+class TestProblemValidation:
+    """Bad problem fields fail before the sampling loop, not after it."""
+
+    def test_unknown_level_raises_before_any_sampling(self):
+        """The reweighting looks levels up in MATH-500's counts. Failing
+        afterwards would discard a whole run of generation."""
+        sampler = canned()
+        with pytest.raises(ValueError):
+            evaluate(MODEL, TOKENIZER, [dict(P1, level=6)], lenient(),
+                     n_samples=3, sampler=sampler)
+        assert sampler.calls == []
+
+    def test_missing_field_raises_before_any_sampling(self):
+        sampler = canned()
+        problem = {k: v for k, v in P1.items() if k != "answer"}
+        with pytest.raises(ValueError):
+            evaluate(MODEL, TOKENIZER, [problem], lenient(), n_samples=3,
+                     sampler=sampler)
+        assert sampler.calls == []
+
+
 class TestLogprobSummary:
     """The summary is the mean token logprob up to and including the
     first EOS. Positions after it hold -inf from the generation scores,
@@ -205,18 +231,28 @@ class TestLogprobSummary:
     def test_no_eos_averages_every_token(self):
         logprobs = torch.tensor([[-1.0, -2.0, -3.0]])
         generated = torch.tensor([[5, 6, 7]])
-        got = sequence_logprob_summary(logprobs, generated, eos_id=0)
+        got = sequence_logprob_summary(logprobs, generated, eos_ids=0)
         assert got.tolist() == pytest.approx([-2.0])
 
     def test_eos_is_included_and_padding_after_it_is_not(self):
         logprobs = torch.tensor([[-1.0, -3.0, float("-inf"), float("-inf")]])
         generated = torch.tensor([[5, 0, 0, 0]])
-        got = sequence_logprob_summary(logprobs, generated, eos_id=0)
+        got = sequence_logprob_summary(logprobs, generated, eos_ids=0)
         assert got.tolist() == pytest.approx([-2.0])
+
+    def test_any_of_several_eos_ids_ends_the_sequence(self):
+        """Generation stops on the ids in the model's generation config,
+        which on a chat checkpoint is a list. A row that stopped on one
+        of them must not average in the -inf that follows."""
+        logprobs = torch.tensor([[-1.0, -3.0, float("-inf")],
+                                 [-1.0, -3.0, float("-inf")]])
+        generated = torch.tensor([[5, 0, 0], [5, 1, 1]])
+        got = sequence_logprob_summary(logprobs, generated, eos_ids=(0, 1))
+        assert got.tolist() == pytest.approx([-2.0, -2.0])
 
     def test_rows_are_summarised_independently(self):
         logprobs = torch.tensor([[-1.0, -3.0, float("-inf")],
                                  [-2.0, -2.0, -2.0]])
         generated = torch.tensor([[5, 0, 0], [5, 6, 7]])
-        got = sequence_logprob_summary(logprobs, generated, eos_id=0)
+        got = sequence_logprob_summary(logprobs, generated, eos_ids=0)
         assert got.tolist() == pytest.approx([-2.0, -2.0])
