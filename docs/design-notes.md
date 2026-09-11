@@ -7,12 +7,12 @@
 > rejected, and the evidence for each.
 >
 > Provenance: the scorer interface is the capstone's closed-book
-> constraint, so every decision recorded here is self-written with three
-> exceptions. The section skeleton was scaffolded; the content is Naoki's.
-> The exceptions are *The fallback contract*, drafted with Claude while the
-> verifier was implemented, and the two `grpo.py` sections, drafted with
-> Claude while that module was implemented, each from options Claude
-> proposed and Naoki accepted.
+> constraint, so every decision recorded here is self-written, except
+> for the sections drafted with Claude while a module was implemented,
+> each from options Claude proposed and Naoki accepted: *The fallback
+> contract* (verifier), the two `grpo.py` sections, and the three
+> `evaluate.py` sections. The section skeleton was scaffolded; the
+> content is Naoki's.
 
 ## One interface or two
 
@@ -209,6 +209,78 @@ The mean sees only what it is handed. A harness that accumulates backward per ro
 **Pinned by.**
 `test_loss_is_the_mean_of_negative_weighted_logprobs` (-0.5, where a sum gives -1.0), `test_gradient_is_minus_advantage_over_n`, and `test_batched_rollouts_reduce_to_one_scalar`, all in `tests/test_grpo.py`. `TestLossShapeMismatch` pins that a (G, 1) column against a (G,) row raises rather than broadcasting to an outer product, and `TestLossGuards` that empty inputs raise rather than returning a NaN mean; the PR's code review found both.
 
+## The sampler seam
+
+**Decision.**
+`evaluate` keeps the committed positional signature `(model, tokenizer, problems, scorer)` and adds three keyword-only parameters: `n_samples` (default 7, the flag's default), `fallback` (default None, so omission grades boxed-only), and `sampler` (default `sample_solutions`). A sampler takes the model, the tokenizer, the problem statement and n, and returns the material bundle as a list of `Candidate`, so building the bundle, the first of row 7's two obligations, is met at the seam. Everything after the seam is a function of the returned bundle alone: extraction with the caller's fallback, scoring, selection by first argmax after the all-rejected check, grading, and the stored record holding samples with their summaries, candidates, scores, the selected index and correctness. That is the second obligation, and it is what lets a scorer be re-run over the record offline. Three checks guard the loop rather than sit inside it: every problem is validated before any sampling starts, because the reweighting looks each level up in MATH-500's counts and would otherwise fail after a full run of generation and return nothing; a sampler that returns other than `n_samples` candidates raises; and `n_samples` below one raises, because a zero-length candidate set passes the count check (`0 == 0`) and `_select([])` returns None, so an empty run would report 0% accuracy rather than a bad flag.
+
+Two further parameters exist because a guard cannot help once the loop is running. `seed` seeds the sampling per problem, so a run over the frozen subset repeats: the subset is frozen by `random.Random(42)` and the sampling over it was not, which left a before/after delta carrying run-to-run noise it could not be separated from. `on_record` hands the caller each record as it is finished, because the returned list is a local that any exception inside the loop discards, and an out-of-memory error at problem 37 of 50 would otherwise lose every earlier problem's generation. That is the same failure up-front validation was added to prevent, reached by a path validation cannot guard.
+
+The record mirrors the bundle field for field rather than naming its fields, so the round trip stays exact as the bundle grows. `Candidate` grew one optional field for this: `finished`, false when a sample hit the token cap. Decoding strips the stop token, so without it a sample that ran out of tokens is indistinguishable offline from one that finished and got the answer wrong, which is the first question a low baseline raises. The field is additive and every scorer ignores it, which is what the protocol's "fields a given scorer does not use are simply ignored by it" already allows for.
+
+**Rejected.**
+A fake model and tokenizer pair in the tests, mimicking `generate`. It reproduces the Hugging Face surface line by line, breaks when that surface moves, and tests the double rather than the code.
+Replacing the sampler by patching a module attribute. The dependency would be invisible in the signature, and the tests would depend on the module's private layout.
+A default fallback of `"number"` for evaluate, since both eval roles use it. The policy in [Three roles, one verifier](#three-roles-one-verifier) is that omission fails toward strict, and the equality of roles 1 and 3 is enforced by writing the same argument at both call sites, not by a default that one site could forget it relies on.
+
+**Evidence.**
+(1) Row 7 of the audit already recorded the widening; the seam is how both halves of it land without touching the protocol.
+(2) The purity argument in [What a scorer consumes and returns](#what-a-scorer-consumes-and-returns), that no scorer holds a model and none needs a model double, extends through the seam to everything in `evaluate` past the sampler.
+(3) `test_stored_bundle_rescoring_reproduces_the_stored_scores` re-runs the scorer over `Candidate` objects rebuilt from the stored record and gets the stored scores back. That is the forensics decision in [Forensics: obligation or convention](#forensics-obligation-or-convention) made testable, and it holds only because the record stores the summary and not just the text.
+
+**Cost accepted.**
+`sample_solutions` itself has no test in the suite; it was verified by hand against the cached base model, where two problems graded correctly with finite summaries, and it will be exercised by the pipeline run. Most of the defects two rounds of code review found were inside it, which is the cost of that gap rather than an argument against the seam: each was found by running the sampler, and none would have been caught by a model double built to the same mistaken assumptions. What the seam does buy is that the arithmetic came back out: `token_logprobs_from_logits` and `sequence_logprob_summary` are pure functions of tensors and are pinned by hand-derived values, so only the generation call itself is unreachable. The all-rejected check lives at this call site as the veto section requires, and a second call site (best-of-N on the self-consistency path) must repeat it.
+
+**Pinned by.**
+`TestSampling`, `TestSelection`, `TestGrading`, `TestRecord`, `TestProblemValidation`, `TestIncrementalRecords` and `TestSeeding` in `tests/test_evaluate.py`: what the sampler receives, a sampler returning the wrong count raising, zero samples raising, a bad level or a missing field raising before any sampling runs, a failure mid-loop still having delivered the earlier records, the same seed reproducing a run and a different one changing it, a capped sample marked unfinished, argmax with first-of-ties, all-rejected selecting nothing and counting wrong, the fallback rescuing an unboxed selection and its omission grading boxed-only, the record's contents and order, and the offline re-scoring.
+
+## How the base model is prompted and summarised
+
+**Decision.**
+The default sampler prompts with plain text, `Problem: ... Solve the problem. Put the final answer in \boxed{}. Solution:`, and samples at temperature 0.7 with top-p 0.95 and a 512-token cap; all three are parameters. The logprob summary is the mean, over the generated tokens up to and including the first stop token, of the logprob **the model** assigned: it is read from the raw logits, not from the processed scores generation also returns. Padding is excluded by selection rather than by a multiplicative mask, and the stop tokens are the set the model's generation config names, not the single id the tokenizer names.
+
+**Rejected.**
+The tokenizer's chat template. Qwen3-0.6B-Base ships one, but a base model was not trained on it: under the template it regurgitated prompts and boxed nothing usable in 3 of 3 at either temperature, where the plain prompt at 0.7 boxed 3 of 3, all correct.
+Temperature 1.0. On the same probe it boxed 1 of 3 against 3 of 3 at 0.7.
+The sum of token logprobs as the summary. It falls with length, so it prefers short samples for being short; the lab's per-token quantity is the mean, and the over-selection of degenerate fluency that it measured is what `LogprobRank` already discounts by ranking.
+Excluding the EOS from the mean. The model chose it, and a sample that ended is a different event from one that ran into the cap.
+Masking padded positions by multiplying by zero. The generation scores hold -inf there, and -inf times zero is NaN: the first version returned NaN for every sample that finished early, found only by running against the model.
+Retaining generation's logits to summarise them. Asking for them keeps one vocabulary-wide tensor per step, 2.03 GB at the default cap and sample count before the copies that scoring makes, which is enough to end a 50-problem eval partway. A second forward pass over the finished sequences spends compute instead and bounds the peak at one chunk of rows; the realised token's logprob is its logit minus the row's logsumexp, which is the same quantity as a gather over `log_softmax` without allocating a second tensor the size of the logits.
+Summarising the processed scores, which is what generation returns by default. They have already been divided by the temperature and truncated to the nucleus, so their log-softmax is the probability under the sampling distribution rather than under the model. Summing a per-step monotone transform is not monotone over a sequence, so this is not a harmless rescaling: it changes the order `LogprobRank` sees.
+Taking the stop token from the tokenizer. It names one id, while generation stops on whatever the generation config lists, which on a chat checkpoint is several. When they disagree, a row that finished early looks unfinished, its padded -inf positions are averaged in, and the summary becomes -inf with nothing raised. `LogprobRank` then scores every such candidate as the lowest rank, and the -inf is written into the stored record.
+
+**Evidence.**
+(1) The probe: one problem, three samples, 48 tokens, four configurations, run against the cached base model. Plain at 0.7: 3 of 3 boxed and correct. Plain at 1.0: 1 of 3. Chat template at either: 0 of 3 usable.
+(2) The end-to-end run after the fix: two problems, three samples each, every summary finite, both graded correctly.
+(3) The scores-against-logits probe: eight samples of one problem, ranked by each. The two orderings disagree, so the choice is not cosmetic.
+(4) The memory measurement: seven samples at half the default cap peaked 1.25 GB above the loaded weights under the recompute, against a retained tuple whose first copy alone is 1.09 GB at that size and which scoring then copies again three times. Both probes came out of the PR's code review, which is also where the tokenizer-versus-config hazard was found; neither is reachable from the suite, because the sampler needs a model.
+
+**Cost accepted.**
+The probe is evidence enough to choose a default and not to tune one; temperature, top-p and the token cap are parameters of the sampler for that reason. They are not reachable through `evaluate`, which calls a sampler with exactly the four arguments the seam names, so a caller changes them by partial application. The cap is the one most likely to need it, since a sample that hits it is a sample the gate rejects. The prompt wording is pinned by no test. A chat-tuned checkpoint would need the template back, and that switch is a sampler argument away rather than a design change.
+
+**Pinned by.**
+`TestLogprobSummary` in `tests/test_evaluate.py`: no stop token averages every token, the stop token is included and the padding after it is not, any of several stop ids ends a row, and rows are summarised independently. `TestTokenLogprobs` pins the logsumexp form against a hand-derived uniform case and against a gather over `log_softmax`, and `TestEosIds` that a model naming no stop token raises rather than failing with a TypeError deep in the helper. The prompt, the sampling parameters and the choice of logits over scores are pinned by nothing, the sampler being the one function no suite test reaches.
+
+## Level-reweighted accuracy
+
+**Decision.**
+Alongside raw accuracy, `evaluate` reports accuracy under MATH-500's level shares: 43, 90, 105, 128 and 134 problems of 500 at levels 1 to 5. It is the sum over the levels present in the subset of the level's share times the accuracy on that level, with the shares renormalised over the levels present.
+
+**Rejected.**
+Raw accuracy alone. The seed-42 subset skews hard, mean level 3.88 against 3.44 for the full set, which the stub docstring records as the reason the second number exists.
+Per-problem weights without renormalisation. A level missing from the subset would leave the total summing to less than one.
+Per-level accuracies instead of one scalar. Fifty problems over five levels gives cells of a handful of problems each, and before/after needs one number to compare.
+
+**Evidence.**
+(1) The five counts give a mean level of exactly 3.44, the figure the docstring quotes, so they are the intended reference and not an approximation of it.
+(2) `test_reweighting_is_the_identity_on_one_level`: with one level present the renormalised share is 1 and the number equals raw accuracy, which is what a reweighting must do when there is nothing to reweight.
+
+**Cost accepted.**
+Reweighting does not reduce variance; a level with three problems in the subset contributes its full share with the variance of three coin flips. Both numbers are for before/after on the same subset, and neither is comparable to an externally reported MATH-500 figure.
+
+**Pinned by.**
+`TestAccuracy` in `tests/test_evaluate.py`: raw is the fraction correct, the two-level case gives 43/177 by hand, one level is the identity, and no problems raise.
+
 ## Forensics: obligation or convention
 
 **Decision.**
@@ -271,6 +343,7 @@ Every contract this repo committed before the interface existed, checked against
 
 **Row 7 — `evaluate` widens in two directions.**
 The signature places the model asymmetry at the caller, so on the eval path `evaluate` must *build* the material bundle, including the logprob summary; and the offline re-run argument in *Forensics* requires that bundle to be *stored*, not just the raw text. The stub promises neither. It was under-specified rather than wrong: it was written before the material type existed. Both obligations land on `evaluate`, and neither reaches the protocol.
+Landed as three keyword-only additions to the committed positional signature, `n_samples`, `fallback` and `sampler`; the bundle is built by the sampler and stored in the record. See [The sampler seam](#the-sampler-seam).
 
 **Not in this table.**
 The README's phrase "Scorer/reward is a swappable interface" overstates the design, since reward strictness swaps at the trainer harness rather than in `scorers.py`. That is prose rather than a committed contract, and it is corrected when the design lands.
