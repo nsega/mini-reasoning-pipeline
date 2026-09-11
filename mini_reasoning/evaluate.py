@@ -21,6 +21,7 @@ README discusses it. The full record is in docs/design-notes.md.
   set), so the raw number understates the model.
 """
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import asdict
 
 import torch
 
@@ -38,7 +39,8 @@ _PROMPT = ("Problem: {problem}\n"
 
 def sample_solutions(model, tokenizer, problem: str, n: int,
                      max_new_tokens: int = 512, temperature: float = 0.7,
-                     top_p: float = 0.95) -> list[Candidate]:
+                     top_p: float = 0.95,
+                     logprob_batch: int = 1) -> list[Candidate]:
     """Samples n solutions and summarises each by its mean token logprob.
 
     The prompt is plain text rather than the tokenizer's chat template:
@@ -50,7 +52,10 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
     processed scores. The scores have already been divided by the
     temperature and truncated to the nucleus, so summarising them would
     rank candidates by the sampling distribution instead of by the
-    model: on one 8-sample probe the two orderings differed.
+    model: on one 8-sample probe the two orderings differed. The logits
+    are recomputed in a second forward pass rather than retained by
+    generation, which would hold 2 GB at the defaults before scoring
+    copies it.
 
     Args:
         model: A causal LM with generate and compute_transition_scores.
@@ -61,10 +66,13 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
         temperature: Sampling temperature; 1.0 boxed 1 of 3 on the same
             probe where 0.7 boxed 3 of 3.
         top_p: Nucleus sampling cutoff.
+        logprob_batch: Rows scored per forward pass. One keeps the peak
+            at a single sequence's logits.
 
     Returns:
-        One Candidate per sample: the decoded text and the mean logprob
-        the model assigned to its generated tokens, padding excluded.
+        One Candidate per sample: the decoded text, the mean logprob the
+        model assigned to its generated tokens with padding excluded,
+        and whether it stopped rather than hitting the cap.
     """
     eos_ids = _eos_ids(model, tokenizer)
     pad_id = tokenizer.pad_token_id
@@ -72,19 +80,63 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
         pad_id = eos_ids[0]
     inputs = tokenizer(_PROMPT.format(problem=problem), return_tensors="pt")
     inputs = inputs.to(model.device)
+    prompt_len = inputs["input_ids"].shape[1]
     with torch.no_grad():
-        out = model.generate(
+        sequences = model.generate(
             **inputs, do_sample=True, temperature=temperature, top_p=top_p,
             num_return_sequences=n, max_new_tokens=max_new_tokens,
-            output_logits=True, return_dict_in_generate=True,
             pad_token_id=pad_id)
-        token_logprobs = model.compute_transition_scores(
-            out.sequences, out.logits, normalize_logits=True)
-    generated = out.sequences[:, inputs["input_ids"].shape[1]:]
+        token_logprobs = _generated_token_logprobs(
+            model, sequences, prompt_len, logprob_batch)
+    generated = sequences[:, prompt_len:]
     summaries = sequence_logprob_summary(token_logprobs, generated, eos_ids)
+    stops = torch.tensor(eos_ids, device=generated.device)
+    finished = torch.isin(generated, stops).any(-1)
     texts = tokenizer.batch_decode(generated, skip_special_tokens=True)
-    return [Candidate(text=text, logprob_summary=float(summary))
-            for text, summary in zip(texts, summaries)]
+    return [Candidate(text=text, logprob_summary=float(summary),
+                      finished=bool(done))
+            for text, summary, done in zip(texts, summaries, finished)]
+
+
+def token_logprobs_from_logits(logits: torch.Tensor,
+                               token_ids: torch.Tensor) -> torch.Tensor:
+    """Logprob of each realised token, without a full log_softmax copy.
+
+    log_softmax allocates a second tensor the size of the logits, which
+    are the largest thing the sampler holds. Subtracting the logsumexp
+    from the gathered logit is the same quantity and reduces over the
+    vocabulary rather than materialising it.
+
+    Args:
+        logits: Shape (rows, steps, vocab).
+        token_ids: Shape (rows, steps), the token realised at each step.
+
+    Returns:
+        Shape (rows, steps).
+    """
+    chosen = logits.gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)
+    return chosen - logits.logsumexp(-1)
+
+
+def _generated_token_logprobs(model, sequences: torch.Tensor, prompt_len: int,
+                              batch_size: int) -> torch.Tensor:
+    """Scores the generated tail a few rows at a time.
+
+    Asking generation to return its logits retains one vocabulary-wide
+    tensor per step: 2 GB at the default cap and sample count, before
+    the copies scoring them makes, which is enough to end a 50-problem
+    eval partway. A second forward pass spends compute instead and
+    bounds the peak at one chunk of rows.
+    """
+    width = max(batch_size, 1)
+    chunks = []
+    for start in range(0, sequences.shape[0], width):
+        rows = sequences[start:start + width]
+        logits = model(rows).logits[:, prompt_len - 1:-1, :].float()
+        chunks.append(token_logprobs_from_logits(logits,
+                                                 rows[:, prompt_len:]))
+        del logits
+    return torch.cat(chunks)
 
 
 def _eos_ids(model, tokenizer) -> tuple[int, ...]:
@@ -96,8 +148,14 @@ def _eos_ids(model, tokenizer) -> tuple[int, ...]:
     """
     eos = getattr(model.generation_config, "eos_token_id", None)
     if eos is None:
-        eos = tokenizer.eos_token_id
-    return (eos,) if isinstance(eos, int) else tuple(eos)
+        eos = getattr(tokenizer, "eos_token_id", None)
+    ids = (eos,) if isinstance(eos, int) else tuple(eos or ())
+    if not ids:
+        raise ValueError(
+            "no stop token: neither the generation config nor the "
+            "tokenizer names an eos_token_id, so a sample that finished "
+            "cannot be told from one that hit the cap")
+    return ids
 
 
 def sequence_logprob_summary(token_logprobs: torch.Tensor,
@@ -105,10 +163,12 @@ def sequence_logprob_summary(token_logprobs: torch.Tensor,
                              eos_ids: int | Iterable[int]) -> torch.Tensor:
     """Mean token logprob per row, up to and including the first EOS.
 
-    Positions after the first stop token are padding. They can carry
-    -inf, so they are excluded by selection rather than by a
-    multiplicative mask, which would turn -inf times zero into NaN. A
-    row that never stopped averages every token.
+    Positions after the first stop token are padding, and are excluded
+    by selection rather than by a multiplicative mask. The mask came
+    first from the processed scores, which carry -inf there, and -inf
+    times zero is NaN; the caller now passes raw logits, where those
+    positions hold ordinary values, but selection stays because it is
+    exact either way. A row that never stopped averages every token.
 
     Args:
         token_logprobs: Shape (rows, steps), one logprob per generated
@@ -174,7 +234,8 @@ def _level_reweighted_accuracy(records: Sequence[Mapping]) -> float:
 
 def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,
              *, n_samples: int = 7, fallback: str | None = None,
-             sampler: Sampler = sample_solutions) -> dict:
+             sampler: Sampler = sample_solutions, seed: int | None = None,
+             on_record: Callable[[dict], None] | None = None) -> dict:
     """Samples, selects and grades every problem, and stores the record.
 
     Args:
@@ -186,7 +247,16 @@ def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,
         n_samples: Samples drawn per problem, the candidate-set size.
         fallback: Extraction fallback for grading. None is boxed-only,
             the strict default; both eval call sites pass "number".
-        sampler: Returns the material bundle for one problem.
+        sampler: Returns the material bundle for one problem. It is
+            called with exactly (model, tokenizer, problem, n), so the
+            default sampler's own knobs (the token cap, temperature and
+            top-p) are set by partial application, not through here.
+        seed: Seeds the sampling per problem, so a run over the frozen
+            subset repeats. None leaves the global RNG alone, and a
+            before/after delta then carries sampling noise.
+        on_record: Called with each record as it is finished. The
+            returned list is lost if the loop raises, so a caller that
+            must not lose a long run persists from here.
 
     Returns:
         A dict with "accuracy", "level_reweighted_accuracy" and
@@ -195,15 +265,20 @@ def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,
         correctness.
 
     Raises:
-        ValueError: if problems is empty, if any problem lacks a
-            required field or carries a level outside MATH-500's five,
-            or if the sampler returns other than n_samples samples.
+        ValueError: if problems is empty, if n_samples is below one, if
+            any problem lacks a required field or carries a level
+            outside MATH-500's five, or if the sampler returns other
+            than n_samples samples.
     """
     if not problems:
         raise ValueError("evaluate needs at least one problem")
+    if n_samples < 1:
+        raise ValueError(f"n_samples must be >= 1, got {n_samples}")
     _validate(problems)
     records = []
-    for problem in problems:
+    for position, problem in enumerate(problems):
+        if seed is not None:
+            torch.manual_seed(seed + position)
         samples = list(sampler(model, tokenizer, problem["problem"],
                                n_samples))
         if len(samples) != n_samples:
@@ -216,17 +291,19 @@ def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,
         selected = _select(scores)
         correct = selected is not None and verifier.verify_answer(
             candidates[selected], problem["answer"])
-        records.append({
+        record = {
             "unique_id": problem["unique_id"],
             "level": problem["level"],
             "answer": problem["answer"],
-            "samples": [{"text": s.text, "logprob_summary": s.logprob_summary}
-                        for s in samples],
+            "samples": [asdict(s) for s in samples],
             "candidates": candidates,
             "scores": scores,
             "selected": selected,
             "correct": bool(correct),
-        })
+        }
+        records.append(record)
+        if on_record is not None:
+            on_record(record)
     accuracy = sum(r["correct"] for r in records) / len(records)
     return {
         "accuracy": accuracy,

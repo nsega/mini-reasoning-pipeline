@@ -7,10 +7,15 @@ check the all-rejected case first, grade with the caller's fallback, and
 report raw and level-reweighted accuracy. Sampling is the one model-bound
 step, so it is injected; scorers and the verifier are real.
 """
+from types import SimpleNamespace
+
 import pytest
 import torch
 
-from mini_reasoning.evaluate import evaluate, sequence_logprob_summary
+from mini_reasoning.evaluate import (
+    _eos_ids, evaluate, sequence_logprob_summary,
+    token_logprobs_from_logits,
+)
 from mini_reasoning.scorers import (
     REJECTED, Candidate, Composite, ParseabilityGate, VoteAgreement,
 )
@@ -79,6 +84,13 @@ class TestSampling:
         evaluate(MODEL, TOKENIZER, [P1], lenient(), n_samples=2,
                  sampler=sampler)
         assert sampler.calls == [(MODEL, TOKENIZER, "What is 6*7?", 2)]
+
+    def test_zero_samples_raises(self):
+        """0 == 0 satisfies the count check and all([]) is True, so an
+        empty candidate set would report 0% rather than a bad flag."""
+        with pytest.raises(ValueError):
+            evaluate(MODEL, TOKENIZER, [P1], lenient(), n_samples=0,
+                     sampler=canned())
 
     def test_a_sampler_returning_the_wrong_count_raises(self):
         """The candidate set is what n_samples names, so a sampler that
@@ -149,9 +161,12 @@ class TestRecord:
         assert record["level"] == 1
         assert record["answer"] == "42"
         assert record["samples"] == [
-            {"text": r"so \boxed{42}", "logprob_summary": -1.0},
-            {"text": "the answer is 7", "logprob_summary": -0.1},
-            {"text": r"therefore \boxed{42}", "logprob_summary": -2.0},
+            {"text": r"so \boxed{42}", "logprob_summary": -1.0,
+             "finished": None},
+            {"text": "the answer is 7", "logprob_summary": -0.1,
+             "finished": None},
+            {"text": r"therefore \boxed{42}", "logprob_summary": -2.0,
+             "finished": None},
         ]
         assert record["candidates"] == ["42", "7", "42"]
         assert record["scores"] == [1.0, 0.0, 1.0]
@@ -167,6 +182,107 @@ class TestRecord:
         for record in results["records"]:
             rebuilt = [Candidate(**sample) for sample in record["samples"]]
             assert scorer.score(rebuilt) == record["scores"]
+
+    def test_a_sample_that_hit_the_cap_is_marked_unfinished(self):
+        """Decoding strips the stop token, so without this flag a sample
+        that ran out of tokens is indistinguishable offline from one
+        that finished and simply got the answer wrong."""
+        def capped(model, tokenizer, problem, n):
+            return [
+                Candidate(text=r"\boxed{42}", logprob_summary=-1.0,
+                          finished=True),
+                Candidate(text="ran out before the box",
+                          logprob_summary=-2.0, finished=False),
+            ]
+
+        results = evaluate(MODEL, TOKENIZER, [P1], lenient(), n_samples=2,
+                           fallback="number", sampler=capped)
+        samples = results["records"][0]["samples"]
+        assert [s["finished"] for s in samples] == [True, False]
+
+
+class TestIncrementalRecords:
+    """A caller can persist each record as it is finished."""
+
+    def test_on_record_is_called_as_each_problem_finishes(self):
+        seen = []
+        evaluate(MODEL, TOKENIZER, [P1, P2], lenient(), n_samples=3,
+                 fallback="number", sampler=canned(), on_record=seen.append)
+        assert [r["unique_id"] for r in seen] == ["p1", "p2"]
+
+    def test_a_failure_mid_loop_still_delivered_the_earlier_records(self):
+        """The returned list is dropped when the loop raises, so hours of
+        generation are lost unless the caller was handed each record."""
+        seen = []
+
+        def fails_on_the_second(model, tokenizer, problem, n):
+            if problem == P2["problem"]:
+                raise RuntimeError("out of memory")
+            return list(SAMPLES[problem][:n])
+
+        with pytest.raises(RuntimeError):
+            evaluate(MODEL, TOKENIZER, [P1, P2], lenient(), n_samples=3,
+                     fallback="number", sampler=fails_on_the_second,
+                     on_record=seen.append)
+        assert [r["unique_id"] for r in seen] == ["p1"]
+
+
+class TestSeeding:
+    """Before/after needs the sampling over the frozen subset repeatable."""
+
+    @staticmethod
+    def noisy(model, tokenizer, problem, n):
+        draws = torch.randint(0, 10 ** 6, (n,)).tolist()
+        return [Candidate(text=rf"\boxed{{{draw}}}", logprob_summary=-1.0)
+                for draw in draws]
+
+    def run(self, seed):
+        results = evaluate(MODEL, TOKENIZER, [P1], lenient(), n_samples=3,
+                           fallback="number", sampler=self.noisy, seed=seed)
+        return results["records"][0]["candidates"]
+
+    def test_the_same_seed_reproduces_the_candidates(self):
+        assert self.run(7) == self.run(7)
+
+    def test_a_different_seed_changes_them(self):
+        assert self.run(7) != self.run(8)
+
+
+class TestTokenLogprobs:
+    """Realized-token logprobs without a full log_softmax copy."""
+
+    def test_uniform_logits_give_log_one_over_vocab(self):
+        got = token_logprobs_from_logits(torch.zeros(1, 2, 4),
+                                         torch.tensor([[0, 3]]))
+        assert got[0].tolist() == pytest.approx([-1.3863, -1.3863], abs=1e-4)
+
+    def test_matches_log_softmax_then_gather(self):
+        torch.manual_seed(0)
+        logits = torch.randn(2, 3, 7)
+        ids = torch.randint(0, 7, (2, 3))
+        want = torch.log_softmax(logits, -1).gather(
+            -1, ids.unsqueeze(-1)).squeeze(-1)
+        got = token_logprobs_from_logits(logits, ids)
+        assert torch.allclose(got, want, atol=1e-6)
+
+
+class TestEosIds:
+    """A model with no stop token is a caller error, not a TypeError."""
+
+    def test_no_configured_stop_token_raises_value_error(self):
+        model = SimpleNamespace(
+            generation_config=SimpleNamespace(eos_token_id=None))
+        with pytest.raises(ValueError):
+            _eos_ids(model, SimpleNamespace(eos_token_id=None))
+
+    def test_a_list_of_stop_ids_is_kept_whole(self):
+        model = SimpleNamespace(
+            generation_config=SimpleNamespace(eos_token_id=[2, 3]))
+        assert _eos_ids(model, SimpleNamespace(eos_token_id=3)) == (2, 3)
+
+
+class TestOrder:
+    """Records follow the order the problems came in."""
 
     def test_records_follow_problem_order(self):
         results = evaluate(MODEL, TOKENIZER, [P2, P1], lenient(), n_samples=3,

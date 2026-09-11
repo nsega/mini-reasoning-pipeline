@@ -38,6 +38,7 @@ class Candidate:
     """
     text: str
     logprob_summary: float | None = None   # None when not computed
+    finished: bool | None = None           # False when it hit the cap
 
 
 class Scorer(Protocol):
