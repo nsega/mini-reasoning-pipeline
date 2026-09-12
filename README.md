@@ -58,9 +58,6 @@ before the interface existed.
 ## Reproduction
 
 ```bash
-# The frozen subset is generated once and committed:
-uv run python data/make_subset.py      # needs the datasets package
-
 # The whole pipeline: baseline eval, self-consistency, GRPO, validation:
 uv run python run_pipeline.py
 
@@ -68,9 +65,23 @@ uv run python run_pipeline.py
 uv run python run_pipeline.py --skip-training
 ```
 
-Training holds the policy, its gradients and Adam's state at once, which
-for this 0.6B model in float32 peaked at 8.6 GB on CPU in a two-step
-probe. `--skip-training` needs only the weights.
+The evaluation subset is committed, so neither command regenerates it.
+It is rebuilt only if the recipe itself ever changes, which is a thing
+this experiment does not do mid-flight:
+
+```bash
+uv run --group data python data/make_subset.py
+```
+
+`datasets` sits in its own dependency group for that reason: it is a
+heavy dependency that only the data script needs, so a clone that just
+runs the pipeline never installs it.
+
+Expect roughly 40 seconds per problem for an eval at the default seven
+samples and 512-token cap, so about 35 minutes for the 50-problem
+subset on CPU, and twice that for a run with training in the middle.
+Training holds the policy, its gradients and Adam's state at once,
+which for this 0.6B model in float32 peaked at 8.6 GB.
 
 A note on what the numbers mean: the validation eval grades with the
 same verifier that produced the training reward, differing only in

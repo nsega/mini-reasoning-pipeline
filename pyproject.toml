@@ -11,6 +11,9 @@ dependencies = [
 ]
 
 [dependency-groups]
+data = [
+    "datasets>=3.0",
+]
 dev = [
     "pytest>=8.0",
 ]
