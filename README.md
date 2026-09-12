@@ -58,9 +58,19 @@ before the interface existed.
 ## Reproduction
 
 ```bash
-# TODO: the one command
-uv run python run_pipeline.py
+# The frozen subset is generated once and committed:
+uv run python data/make_subset.py      # needs the datasets package
+
+# Inference and evaluation, end to end:
+uv run python run_pipeline.py --skip-training
 ```
+
+The training stage is not wired yet: `grpo.py` holds the loss and the
+group-relative advantages, and the loop around them (generation under
+`no_grad`, the boxed-only reward, per-rollout backward scaled by 1/G,
+the clip to norm 1.0) has no module behind it. Running without
+`--skip-training` says so rather than reporting a before/after pair that
+never had training between it.
 
 ## Provenance
 

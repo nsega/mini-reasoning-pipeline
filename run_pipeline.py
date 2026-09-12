@@ -1,31 +1,170 @@
 """Single-command entry point: the capstone's done-criterion.
 
-Scaffold (Claude-written wiring; stages are Naoki's modules). Each
-stage raises NotImplementedError until its module lands, so the CLI
-shape is testable before the pipeline is.
+Wiring only. Every stage is one of the modules in mini_reasoning/, and
+the decisions behind them are recorded in docs/design-notes.md. What
+this file owns is the order, the arguments each stage is given, and
+where the records land.
+
+    baseline eval (role 1)  -> self-consistency over those records
+    -> GRPO training (role 2) -> validation eval (role 3)
+
+Both evals grade with the same lenient extraction, which is what makes
+before and after comparable; the reward role's boxed-only strictness is
+the trainer harness's to pass, not this file's. The self-consistency
+stage re-reads the records the baseline already stored rather than
+generating again, which is what storing the bundle bought.
 """
 import argparse
+import json
+from pathlib import Path
+
+from mini_reasoning import consistency, evaluate as evaluation, scorers
+
+EVAL_FALLBACK = "number"
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI. --n-samples sets the candidate set every stage sees."""
     parser = argparse.ArgumentParser(
         description="Qwen3-0.6B reasoning pipeline: baseline eval -> "
                     "self-consistency -> GRPO -> before/after eval")
     parser.add_argument("--subset", default="data/math500_subset50.jsonl")
+    parser.add_argument("--model", default="Qwen/Qwen3-0.6B-Base")
     parser.add_argument("--steps", type=int, default=40,
                         help="GRPO training steps")
     parser.add_argument("--n-samples", type=int, default=7,
-                        help="samples per problem for self-consistency")
+                        help="samples per problem: the candidate set both "
+                             "self-consistency and the selection scorer see")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="seeds sampling, so a run repeats")
     parser.add_argument("--skip-training", action="store_true",
                         help="run the inference/eval stages only")
     parser.add_argument("--out-dir", default="results")
-    args = parser.parse_args()
+    return parser
 
-    from mini_reasoning import consistency, evaluate, grpo, scorers, verifier  # noqa: F401
+
+def load_problems(path) -> list[dict]:
+    """Reads the frozen subset, one problem per line.
+
+    Args:
+        path: Path to a jsonl file of MATH-500 problems.
+
+    Returns:
+        The problems in file order.
+
+    Raises:
+        FileNotFoundError: if the file is absent, naming the generator.
+        ValueError: if it holds no problems.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"no subset at {path}. It is generated once and committed: "
+            "run data/make_subset.py (needs the datasets package) to "
+            "rebuild the seed-42 50-problem subset.")
+    problems = [json.loads(line) for line in path.read_text().splitlines()
+                if line.strip()]
+    if not problems:
+        raise ValueError(f"the subset at {path} holds no problems")
+    return problems
+
+
+def build_scorer(fallback: str | None = EVAL_FALLBACK) -> scorers.Composite:
+    """The lab's composition verdict: gate, then rank, then agreement.
+
+    Both extracting stages get the same fallback the evals grade with. A
+    gate stricter than the grader after it would discard candidates that
+    grader could have scored.
+    """
+    return scorers.Composite((
+        scorers.ParseabilityGate(fallback=fallback),
+        scorers.LogprobRank(),
+        scorers.VoteAgreement(fallback=fallback),
+    ))
+
+
+def vote_accuracy(records) -> float:
+    """Accuracy of self-consistency voting over already-stored records.
+
+    Voting needs no model, so it runs over the candidates the baseline
+    eval extracted rather than sampling again. A record nothing could be
+    extracted from makes the vote raise by module policy, and counts as
+    wrong here: there is no answer to be right with.
+    """
+    correct = 0
+    for record in records:
+        try:
+            winner = consistency.self_consistency_vote(record["candidates"])
+        except ValueError:
+            continue
+        correct += evaluation.verifier.verify_answer(winner, record["answer"])
+    return correct / len(records)
+
+
+def write_results(out_dir, name: str, results: dict) -> Path:
+    """Writes one stage's results, records and all, under out_dir."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{name}.json"
+    path.write_text(json.dumps(results, indent=2) + "\n")
+    return path
+
+
+def _load_model(name: str):
+    """Loads the policy. The one step no test reaches."""
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    return (AutoModelForCausalLM.from_pretrained(name),
+            AutoTokenizer.from_pretrained(name))
+
+
+def run(args, *, load_model=_load_model,
+        sampler=evaluation.sample_solutions) -> dict:
+    """Runs the stages the flags ask for and writes each one out.
+
+    Args:
+        args: Parsed arguments from build_parser.
+        load_model: Returns (model, tokenizer) for a checkpoint name.
+        sampler: Passed through to evaluate.
+
+    Returns:
+        The stage results: "baseline" and "vote_accuracy" always, and
+        "validation" when training ran.
+
+    Raises:
+        NotImplementedError: when training is asked for. The trainer
+            harness is the one stage with no module behind it.
+    """
+    problems = load_problems(args.subset)
+    model, tokenizer = load_model(args.model)
+    scorer = build_scorer()
+    eval_args = dict(n_samples=args.n_samples, fallback=EVAL_FALLBACK,
+                     sampler=sampler, seed=args.seed)
+
+    baseline = evaluation.evaluate(model, tokenizer, problems, scorer,
+                                   **eval_args)
+    write_results(args.out_dir, "baseline", baseline)
+    results = {"baseline": baseline,
+               "vote_accuracy": vote_accuracy(baseline["records"])}
+
+    if args.skip_training:
+        return results
 
     raise NotImplementedError(
-        "pipeline stages land as mini_reasoning/ modules are implemented; "
-        f"config: {vars(args)}")
+        "the GRPO trainer harness is not written yet: grpo.py holds the "
+        "loss and the advantages, but the loop around them (generation "
+        "under no_grad, the boxed-only reward, per-rollout backward "
+        "scaled by 1/G, the clip to norm 1.0) has no module. Re-run "
+        "with --skip-training for the inference and eval stages.")
+
+
+def main():
+    args = build_parser().parse_args()
+    results = run(args)
+    print(f"baseline accuracy      {results['baseline']['accuracy']:.3f}")
+    print("level-reweighted       "
+          f"{results['baseline']['level_reweighted_accuracy']:.3f}")
+    print(f"self-consistency vote  {results['vote_accuracy']:.3f}")
 
 
 if __name__ == "__main__":
