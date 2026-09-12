@@ -11,8 +11,8 @@
 > for the sections drafted with Claude while a module was implemented,
 > each from options Claude proposed and Naoki accepted: *The fallback
 > contract* (verifier), the two `grpo.py` sections, and the three
-> `evaluate.py` sections. The section skeleton was scaffolded; the
-> content is Naoki's.
+> `evaluate.py` sections, and the two `trainer.py` sections. The
+> section skeleton was scaffolded; the content is Naoki's.
 
 ## One interface or two
 
@@ -280,6 +280,51 @@ Reweighting does not reduce variance; a level with three problems in the subset 
 
 **Pinned by.**
 `TestAccuracy` in `tests/test_evaluate.py`: raw is the fraction correct, the two-level case gives 43/177 by hand, one level is the identity, and no problems raise.
+
+## What the trainer does with a flat group
+
+**Decision.**
+A group whose advantages are all zero is skipped outright: no backward pass, and no optimizer step. Every other group runs one backward per rollout, each scaled by 1/G, then a clip to norm 1.0 and one step.
+
+**Rejected.**
+Stepping anyway on the zero gradient that a flat group produces. This is the version that looks correct and is not: Adam carries momentum, so a step taken on an all-zero gradient still moves every weight by the decayed average of previous steps. The whole reason [What group_relative_advantages calls flat](#what-group_relative_advantages-calls-flat) insists on exact zeros is that an all-same-reward group must not move the policy, and an optimizer step would undo that guarantee one layer up.
+Running the backward pass and skipping only the step. It costs a full backward per flat group to compute a gradient already known to be zero, and with a binary reward flat groups are the common case, not the exception.
+Raising on a flat group. The trainer steps through them by design; with a binary reward a problem the policy always gets right, or always gets wrong, is an ordinary thing to encounter.
+
+**Evidence.**
+(1) The guarantee is only as strong as its weakest layer: `group_relative_advantages` returns exact zeros, `grpo_loss` turns them into a zero gradient, and an optimizer with state would still move the weights. The skip is where that chain is actually closed.
+(2) Measured on the cached base model: a problem whose rollouts all scored zero reported a pre-clip norm of 0.0 and took no step, while an answerable one moved all 310 parameter tensors.
+(3) With no KL term there is nothing else acting on a zero-advantage step, which is what makes "no step" the correct behaviour rather than merely a cheap one.
+
+**Cost accepted.**
+A run's step count is an upper bound rather than a count of updates, so the history has to say which steps actually moved the policy, and it does. A schedule keyed to the optimizer's step count advances differently from one keyed to the loop's, and nothing here uses a schedule yet.
+
+**Pinned by.**
+`TestFlatGroups` in `tests/test_trainer.py`, over a real tiny policy and a real Adam optimizer: a flat group after a live one leaves every parameter equal, and a split group does not. The first fails if the step is taken on zeros, which is the mistake the test exists for.
+
+## What the trainer feeds the loss
+
+**Decision.**
+The per-rollout scalar handed to `grpo_loss` is the mean logprob over that rollout's generated tokens, not their sum. Backward runs one rollout at a time, each call scaled by 1/G so the accumulation equals a single batched call. Rollouts are generated under `no_grad` and rescored with gradients afterwards, and the gradient norm is clipped to 1.0 with the pre-clip value reported.
+
+**Rejected.**
+The sum of token logprobs, which is the sequence logprob in the literal sense. It makes a rollout's gradient scale with its length, so a 400-token rollout outweighs a 40-token one before the advantages are applied, and length is not what the reward is measuring.
+One batched backward over the group. Six live graphs OOM'd 18.7GB on MPS in the lab, which is what per-rollout accumulation exists to avoid; without the 1/G scaling it would also be a different step, G times larger, as [What grpo_loss reduces over](#what-grpo_loss-reduces-over) records.
+Generating under `inference_mode`. Its tensors cannot re-enter autograd, and these sequences are rescored with gradients immediately after.
+A KL penalty against a reference policy. The signed-logratio form is the sole gradient on a zero-advantage step and collapsed the policy in 40 steps at this scale, and holding a frozen reference model would double the memory of a run already peaking at 8.6 GB.
+
+**Evidence.**
+(1) The clip is load-bearing rather than defensive: a real step measured a pre-clip norm of 644 against a bound of 1.0, which is the order the lab recorded.
+(2) `test_accumulated_gradient_matches_the_batched_one` compares the two paths over a real policy and real autograd; they agree to 1e-6 only because of the 1/G scaling.
+(3) The mean is also what `evaluate` summarises a sample by, so the quantity the selection path ranks on and the quantity the reward path differentiates are the same shape, which is one fewer thing to hold in mind.
+
+**Cost accepted.**
+The mean puts a further 1/T on the gradient, so the effective learning rate depends on how long the rollouts happen to be; the default of 1e-6 was chosen against that scale rather than independently of it.
+Per-rollout backward is G forward passes instead of one batched pass, trading wall-clock for peak memory, which is the trade the lab's OOM forced.
+Nothing here measures a KL divergence at all, so a run cannot report how far the policy drifted from where it started.
+
+**Pinned by.**
+`TestSequenceLogprobs`, `TestAccumulation` and `TestClipping` in `tests/test_trainer.py`: one differentiable scalar per rollout whose scale does not follow length, accumulation matching a batched call, and the clip bounding what reaches the weights, asserted on the parameter delta rather than on gradient buffers.
 
 ## What the entry point owns
 
