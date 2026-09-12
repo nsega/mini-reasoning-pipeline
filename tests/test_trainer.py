@@ -163,15 +163,20 @@ class TestFlatGroups:
 class TestClipping:
     """Pre-clip norms ran 260-400x the bound, so the clip is load-bearing."""
 
-    def test_the_applied_gradient_norm_is_the_bound(self):
+    def test_the_clip_bounds_what_reaches_the_policy(self):
+        """Asserted on the weights, not on the gradient buffers: under
+        plain SGD at lr 1.0 the parameter delta is the applied
+        gradient, so this holds however the step manages its buffers."""
         model = policy()
-        optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+        before = params(model)
+        optimizer = torch.optim.SGD(model.parameters(), lr=1.0)
         report = train_step(model, optimizer, PROBLEM, None,
                             rollout=rollout_of([RIGHT, WRONG]), group_size=2,
                             max_grad_norm=1e-4)
         assert report["grad_norm"] > 1e-4
-        applied = torch.cat([p.grad.flatten() for p in model.parameters()])
-        assert applied.norm().item() == pytest.approx(1e-4, rel=1e-3)
+        delta = torch.cat([(b - a.detach()).flatten()
+                           for b, a in zip(before, model.parameters())])
+        assert delta.norm().item() == pytest.approx(1e-4, rel=1e-3)
 
     def test_the_report_carries_the_pre_clip_norm(self):
         model = policy()
