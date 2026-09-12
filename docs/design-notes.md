@@ -141,7 +141,7 @@ A named-grader layer: one more indirection for a two-value choice.
 
 **Cost accepted.**
 Eval grading is more lenient than the signal that trained the model, so the circularity claim must be stated precisely. Validation reuses the same verify_answer and extraction machinery that produced the rewards. Only extraction leniency differs. The README will say it in those words.
-role 1 == role 3 is held by discipline, not structure; the rule lives in this document and in a comment at both call sites.
+role 1 == role 3 was held by discipline rather than structure while the rule lived only in this document. `run_pipeline.py` now passes one `EVAL_FALLBACK` constant to both eval calls, so within the pipeline the equality is structural; a caller reaching for `evaluate` directly can still diverge, and this document remains where that rule lives.
 
 **Pinned by.**
 test_same_verifier_serves_reward_and_validation_roles — on a boxed sample, all three roles return the same verdict; on an unboxed sample, the reward grader returns None (False) while the eval grader rescues it - the roles differ exactly where the policy applies, and nowhere else.
@@ -281,6 +281,30 @@ Reweighting does not reduce variance; a level with three problems in the subset 
 **Pinned by.**
 `TestAccuracy` in `tests/test_evaluate.py`: raw is the fraction correct, the two-level case gives 43/177 by hand, one level is the identity, and no problems raise.
 
+## What the entry point owns
+
+**Decision.**
+`run_pipeline.py` owns the order of the stages, the arguments each is given, and where the records land. Nothing else: every stage is one of the modules, and the file holds no logic of its own. Three of those choices are not obvious. Self-consistency runs over the records the baseline eval already stored rather than sampling again. `--skip-training` skips the validation eval as well as the training, so the run reports one eval rather than two. And the training stage raises, naming the trainer harness as the missing module, rather than being skipped when no harness exists. One `EVAL_FALLBACK` constant feeds both eval roles.
+
+**Rejected.**
+Sampling again for the self-consistency stage. Voting needs no model, so a second pass would double the generation cost of a run for nothing, and worse, the two selection strategies would then be choosing from different candidate sets: the comparison between a majority vote and the composite scorer is only meaningful over the same candidates.
+Running the validation eval when training is skipped. Before and after over a model nothing changed measures sampling noise, and under a fixed seed it measures nothing at all, being the same number twice. Reporting it as a before/after pair would invite exactly the reading the pipeline exists to support.
+Skipping the training stage silently when no harness exists. It produces a complete-looking before/after that never had training between it, which is the one result this pipeline must not report.
+Passing the eval fallback at each call site separately. That is what *Three roles, one verifier* recorded as held by discipline; a single constant costs nothing and removes the way the two roles could drift apart.
+
+**Evidence.**
+(1) The records hold every extracted candidate, so voting over them is a pure function of stored data. This is the first consumer of the re-run argument in [Forensics: obligation or convention](#forensics-obligation-or-convention), which until now was an argument with nothing exercising it.
+(2) The harness lessons are written down in `grpo.py`'s module docstring, and no module implements them, so the gap is real rather than a wiring oversight and the error message names it.
+(3) Roles 1 and 3 must grade with the same ruler for a before/after to mean anything, which is what makes the shared constant a structural fix rather than a tidiness one.
+
+**Cost accepted.**
+The vote stage is bound to the baseline's candidate set, so a run cannot vote at one sample count and select at another. That is deliberate, being what keeps the comparison like-for-like, but it does mean the flag controls both.
+A `--skip-training` run writes one results file rather than two, so anything reading the output must handle a missing validation stage rather than assuming a pair.
+The entry point knows the eval strictness, so the constant protects the pipeline's two call sites and not a third role written elsewhere.
+
+**Pinned by.**
+`tests/test_run_pipeline.py`: the subset read and a missing one naming its generator, the scorer's three stages and the fallback at both extracting ones, voting over stored records including a record nothing could be extracted from, `--skip-training` running the baseline and the vote and no validation, training raising, and the records landing under the out directory.
+
 ## Forensics: obligation or convention
 
 **Decision.**
@@ -337,7 +361,7 @@ Every contract this repo committed before the interface existed, checked against
 | 6 | `grpo_loss(logprobs, advantages)`: descent direction, advantages detached | UNCHANGED — `grpo.py` receives only logprobs and advantages; the scorer's logprob summary is built on the eval path instead, which is row 7. |
 | 7 | `evaluate(model, tokenizer, problems, scorer)`, per-problem records | **CHANGED** — see Findings. |
 | 8 | The three committed test names in `tests/test_scorers.py` | UNCHANGED — all three are writable under their existing names, and *The contract tests* adds two further tests without renaming any. |
-| 9 | `--n-samples` default 7 | CHANGED (wording only) — the flag now also sets the candidate-set size handed to the composite scorer, not only to self-consistency. The help text "samples per problem for self-consistency" narrows what the flag controls, and is updated when the design lands. |
+| 9 | `--n-samples` default 7 | CHANGED (wording only): the flag also sets the candidate-set size handed to the composite scorer, not only to self-consistency. The narrow help text was rewritten to name both consumers when the entry point was wired; the default of 7 is unchanged. |
 
 ### Findings
 
