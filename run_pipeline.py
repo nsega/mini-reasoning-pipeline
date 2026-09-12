@@ -10,15 +10,17 @@ where the records land.
 
 Both evals grade with the same lenient extraction, which is what makes
 before and after comparable; the reward role's boxed-only strictness is
-the trainer harness's to pass, not this file's. The self-consistency
-stage re-reads the records the baseline already stored rather than
-generating again, which is what storing the bundle bought.
+the trainer's, passed there and not here. The self-consistency stage
+re-reads the records the baseline already stored rather than generating
+again, which is what storing the bundle bought.
 """
 import argparse
 import json
 from pathlib import Path
 
-from mini_reasoning import consistency, evaluate as evaluation, scorers
+from mini_reasoning import (
+    consistency, evaluate as evaluation, scorers, trainer,
+)
 
 EVAL_FALLBACK = "number"
 
@@ -35,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-samples", type=int, default=7,
                         help="samples per problem: the candidate set both "
                              "self-consistency and the selection scorer see")
+    parser.add_argument("--lr", type=float, default=1e-6,
+                        help="Adam learning rate for GRPO")
     parser.add_argument("--seed", type=int, default=42,
                         help="seeds sampling, so a run repeats")
     parser.add_argument("--skip-training", action="store_true",
@@ -119,21 +123,19 @@ def _load_model(name: str):
 
 
 def run(args, *, load_model=_load_model,
-        sampler=evaluation.sample_solutions) -> dict:
+        sampler=evaluation.sample_solutions,
+        rollout=trainer.sample_rollouts) -> dict:
     """Runs the stages the flags ask for and writes each one out.
 
     Args:
         args: Parsed arguments from build_parser.
         load_model: Returns (model, tokenizer) for a checkpoint name.
         sampler: Passed through to evaluate.
+        rollout: Passed through to the trainer.
 
     Returns:
-        The stage results: "baseline" and "vote_accuracy" always, and
-        "validation" when training ran.
-
-    Raises:
-        NotImplementedError: when training is asked for. The trainer
-            harness is the one stage with no module behind it.
+        The stage results: "baseline" and "vote_accuracy" always, plus
+        "training" and "validation" when training ran.
     """
     problems = load_problems(args.subset)
     model, tokenizer = load_model(args.model)
@@ -150,12 +152,17 @@ def run(args, *, load_model=_load_model,
     if args.skip_training:
         return results
 
-    raise NotImplementedError(
-        "the GRPO trainer harness is not written yet: grpo.py holds the "
-        "loss and the advantages, but the loop around them (generation "
-        "under no_grad, the boxed-only reward, per-rollout backward "
-        "scaled by 1/G, the clip to norm 1.0) has no module. Re-run "
-        "with --skip-training for the inference and eval stages.")
+    history = trainer.train(model, tokenizer, problems, steps=args.steps,
+                            rollout=rollout, group_size=args.n_samples,
+                            lr=args.lr)
+    write_results(args.out_dir, "training", history)
+    results["training"] = history
+
+    validation = evaluation.evaluate(model, tokenizer, problems, scorer,
+                                     **eval_args)
+    write_results(args.out_dir, "validation", validation)
+    results["validation"] = validation
+    return results
 
 
 def main():
@@ -165,6 +172,14 @@ def main():
     print("level-reweighted       "
           f"{results['baseline']['level_reweighted_accuracy']:.3f}")
     print(f"self-consistency vote  {results['vote_accuracy']:.3f}")
+    if "validation" in results:
+        stepped = sum(s["stepped"] for s in results["training"]["steps"])
+        print(f"training steps taken   {stepped}"
+              f" of {len(results['training']['steps'])}")
+        print("validation accuracy    "
+              f"{results['validation']['accuracy']:.3f}")
+        print("level-reweighted       "
+              f"{results['validation']['level_reweighted_accuracy']:.3f}")
 
 
 if __name__ == "__main__":

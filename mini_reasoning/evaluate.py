@@ -32,7 +32,7 @@ MATH500_LEVEL_COUNTS = {1: 43, 2: 90, 3: 105, 4: 128, 5: 134}
 
 Sampler = Callable[[object, object, str, int], Sequence[Candidate]]
 
-_PROMPT = ("Problem: {problem}\n"
+PROMPT = ("Problem: {problem}\n"
            "Solve the problem. Put the final answer in \\boxed{{}}.\n"
            "Solution:")
 
@@ -78,7 +78,7 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
     pad_id = tokenizer.pad_token_id
     if pad_id is None:
         pad_id = eos_ids[0]
-    inputs = tokenizer(_PROMPT.format(problem=problem), return_tensors="pt")
+    inputs = tokenizer(PROMPT.format(problem=problem), return_tensors="pt")
     inputs = inputs.to(model.device)
     prompt_len = inputs["input_ids"].shape[1]
     with torch.no_grad():

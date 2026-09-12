@@ -61,16 +61,22 @@ before the interface existed.
 # The frozen subset is generated once and committed:
 uv run python data/make_subset.py      # needs the datasets package
 
-# Inference and evaluation, end to end:
+# The whole pipeline: baseline eval, self-consistency, GRPO, validation:
+uv run python run_pipeline.py
+
+# Or the inference and evaluation stages alone:
 uv run python run_pipeline.py --skip-training
 ```
 
-The training stage is not wired yet: `grpo.py` holds the loss and the
-group-relative advantages, and the loop around them (generation under
-`no_grad`, the boxed-only reward, per-rollout backward scaled by 1/G,
-the clip to norm 1.0) has no module behind it. Running without
-`--skip-training` says so rather than reporting a before/after pair that
-never had training between it.
+Training holds the policy, its gradients and Adam's state at once, which
+for this 0.6B model in float32 peaked at 8.6 GB on CPU in a two-step
+probe. `--skip-training` needs only the weights.
+
+A note on what the numbers mean: the validation eval grades with the
+same verifier that produced the training reward, differing only in
+extraction strictness. That circularity is deliberate and is the point
+of the three-role design, but it means a before/after gain is a gain
+against this grader, not an independent one.
 
 ## Provenance
 

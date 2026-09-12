@@ -12,10 +12,13 @@ as sampling is in tests/test_evaluate.py.
 import json
 
 import pytest
+import torch
+from torch import nn
 
 from mini_reasoning.scorers import (
     Candidate, Composite, LogprobRank, ParseabilityGate, VoteAgreement,
 )
+from mini_reasoning.trainer import Rollouts
 from run_pipeline import (
     build_parser, build_scorer, load_problems, run, vote_accuracy,
 )
@@ -43,8 +46,28 @@ def canned(model, tokenizer, problem, n):
     return list(SAMPLES[problem][:n])
 
 
+class TinyPolicy(nn.Module):
+    """A real, tiny causal LM, so the training stage trains something."""
+
+    def __init__(self, vocab=32, dim=8):
+        super().__init__()
+        self.embed = nn.Embedding(vocab, dim)
+        self.head = nn.Linear(dim, vocab)
+
+    def forward(self, input_ids):
+        return type("Out", (), {"logits": self.head(self.embed(input_ids))})
+
+
 def loader(name):
-    return object(), object()
+    torch.manual_seed(0)
+    return TinyPolicy(), object()
+
+
+def canned_rollout(model, tokenizer, problem, n):
+    torch.manual_seed(0)
+    texts = [r"so \boxed{42}", r"so \boxed{41}", r"so \boxed{42}"][:n]
+    return Rollouts(sequences=torch.randint(0, 32, (len(texts), 7)),
+                    prompt_len=3, texts=texts)
 
 
 def subset_file(tmp_path, problems=(P1, P2)):
@@ -121,9 +144,21 @@ class TestTrainingGate:
         assert results["vote_accuracy"] == pytest.approx(0.5)
         assert "validation" not in results
 
-    def test_training_raises_until_the_harness_lands(self, tmp_path):
-        with pytest.raises(NotImplementedError, match="harness"):
-            run(args_for(tmp_path), load_model=loader, sampler=canned)
+    def test_training_runs_and_is_followed_by_the_validation_eval(
+            self, tmp_path):
+        """The whole point of the stage: a second eval on the same
+        subset with the same ruler, taken after the policy moved."""
+        args = args_for(tmp_path, **{"--steps": 2})
+        results = run(args, load_model=loader, sampler=canned,
+                      rollout=canned_rollout)
+        assert len(results["training"]["steps"]) == 2
+        assert results["validation"]["accuracy"] == pytest.approx(0.5)
+
+    def test_the_training_history_is_written_out(self, tmp_path):
+        args = args_for(tmp_path, **{"--steps": 1})
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        out = tmp_path / "results" / "training.json"
+        assert json.loads(out.read_text())["steps"][0]["unique_id"] == "p1"
 
 
 class TestResults:
@@ -149,3 +184,6 @@ class TestCli:
 
     def test_the_seed_is_settable_and_defaults_to_the_frozen_one(self):
         assert build_parser().parse_args([]).seed == 42
+
+    def test_the_learning_rate_is_settable(self):
+        assert build_parser().parse_args(["--lr", "1e-5"]).lr == 1e-5
