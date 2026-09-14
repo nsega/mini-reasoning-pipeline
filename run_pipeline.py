@@ -57,15 +57,18 @@ def load_problems(path) -> list[dict]:
         The problems in file order.
 
     Raises:
-        FileNotFoundError: if the file is absent, naming the generator.
+        FileNotFoundError: if the file is absent, naming the command
+            that rebuilds it.
         ValueError: if it holds no problems.
     """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(
             f"no subset at {path}. It is generated once and committed: "
-            "run data/make_subset.py (needs the datasets package) to "
-            "rebuild the seed-42 50-problem subset.")
+            "run `uv run --group data python data/make_subset.py` to "
+            "rebuild the seed-42 50-problem subset. Without --group data "
+            "the script cannot import datasets, which is not a default "
+            "dependency.")
     problems = [json.loads(line) for line in path.read_text().splitlines()
                 if line.strip()]
     if not problems:

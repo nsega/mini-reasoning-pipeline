@@ -91,10 +91,17 @@ class TestLoadProblems:
         got = load_problems(subset_file(tmp_path))
         assert [p["unique_id"] for p in got] == ["p1", "p2"]
 
-    def test_a_missing_subset_names_the_generator(self, tmp_path):
+    def test_a_missing_subset_names_the_command_that_rebuilds_it(
+            self, tmp_path):
         """The file is absent from a fresh clone: the error has to say
-        how to make it, or the one-command run dead-ends."""
-        with pytest.raises(FileNotFoundError, match="make_subset"):
+        how to make it, or the one-command run dead-ends. Naming the
+        script alone is not enough, which is why this matches the whole
+        command: datasets sits in its own dependency group, so an
+        invocation without --group data dead-ends just as surely, on
+        ModuleNotFoundError instead."""
+        with pytest.raises(
+                FileNotFoundError,
+                match=r"--group data python data/make_subset\.py"):
             load_problems(tmp_path / "absent.jsonl")
 
     def test_an_empty_subset_raises(self, tmp_path):
