@@ -75,13 +75,22 @@ uv run --group data python data/make_subset.py
 
 `datasets` sits in its own dependency group for that reason: it is a
 heavy dependency that only the data script needs, so a clone that just
-runs the pipeline never installs it.
+runs the pipeline never installs it. The group isolates installation,
+not resolution: uv locks every group together, so datasets' own
+constraints still reach `uv.lock` — they currently hold `fsspec`, a
+transitive dependency of torch, one release behind where the pipeline
+alone would put it. Nothing the pipeline needs is pinned by that, but
+the group is not a second lockfile.
 
 Expect roughly 40 seconds per problem for an eval at the default seven
 samples and 512-token cap, so about 35 minutes for the 50-problem
-subset on CPU, and twice that for a run with training in the middle.
-Training holds the policy, its gradients and Adam's state at once,
-which for this 0.6B model in float32 peaked at 8.6 GB.
+subset on CPU. A full run pays that twice, for the baseline and the
+validation eval, and the training in between adds 40 steps of seven
+rollouts each: another half hour of generation, plus a backward pass
+per rollout, since the trainer runs them one at a time. Budget nearer
+three times a single eval, not twice. Training holds the policy, its
+gradients and Adam's state at once, which for this 0.6B model in
+float32 peaked at 8.6 GB.
 
 A note on what the numbers mean: the validation eval grades with the
 same verifier that produced the training reward, differing only in
