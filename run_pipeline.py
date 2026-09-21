@@ -118,10 +118,20 @@ def write_results(out_dir, name: str, results: dict) -> Path:
 
 
 def _load_model(name: str):
-    """Loads the policy. The one step no test reaches."""
+    """Loads the policy in float32. The one step no test reaches.
+
+    The dtype is passed rather than left to the library. transformers
+    defaults to the checkpoint's own dtype, and Qwen3 ships bfloat16,
+    whose representable step at these weights is an order of magnitude
+    wider than Adam's 1e-6 update: the optimizer steps, reports a
+    gradient norm, and rounds back to the same weights. float32 is what
+    the trainer's 8.6 GB memory note and the README's timings measured.
+    """
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    return (AutoModelForCausalLM.from_pretrained(name),
+    return (AutoModelForCausalLM.from_pretrained(name,
+                                                 dtype=torch.float32),
             AutoTokenizer.from_pretrained(name))
 
 
