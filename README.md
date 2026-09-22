@@ -82,15 +82,22 @@ transitive dependency of torch, one release behind where the pipeline
 alone would put it. Nothing the pipeline needs is pinned by that, but
 the group is not a second lockfile.
 
-Expect roughly 40 seconds per problem for an eval at the default seven
-samples and 512-token cap, so about 35 minutes for the 50-problem
-subset on CPU. A full run pays that twice, for the baseline and the
+Expect roughly 70 seconds per problem for an eval at the default seven
+samples and 512-token cap, so about an hour for the 50-problem subset
+on CPU. A full run pays that twice, for the baseline and the
 validation eval, and the training in between adds 40 steps of seven
-rollouts each: another half hour of generation, plus a backward pass
-per rollout, since the trainer runs them one at a time. Budget nearer
-three times a single eval, not twice. Training holds the policy, its
-gradients and Adam's state at once, which for this 0.6B model in
-float32 peaked at 8.6 GB.
+rollouts each, plus a backward pass per rollout, since the trainer
+runs them one at a time. Budget nearer three times a single eval, not
+twice. Measured end to end on an M4 Pro at float32: 57 minutes for the
+baseline eval, 44 for the 40 GRPO steps, 54 for the validation eval,
+two and a half hours in all. The same work at the same seed has varied
+by 25 minutes between runs on this machine, so these are a floor
+rather than a clock. Per-problem cost tracks difficulty, because
+harder problems run longer before they stop: samples average 666
+characters at level 1 against 1187 at level 5, and this subset is
+back-loaded with 36 of its 50 problems at levels 4 and 5. Training
+holds the policy, its gradients and Adam's state at once, which for
+this 0.6B model in float32 peaked at 8.6 GB.
 
 A note on what the numbers mean: the validation eval grades with the
 same verifier that produced the training reward, differing only in

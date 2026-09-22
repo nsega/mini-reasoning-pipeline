@@ -180,8 +180,66 @@ class TestResults:
         assert [r["unique_id"] for r in written["records"]] == ["p1", "p2"]
 
 
+class TestReuseBaseline:
+    """A stored baseline can stand in for the eval that produced it.
+
+    The eval is deterministic in its seed, so a run whose training
+    stage died reproduces the same records at the same cost. What the
+    file cannot prove is the model and dtype behind it, so the checks
+    here pin what is checkable and the flag asserts the rest.
+    """
+
+    def test_the_stored_baseline_is_read_instead_of_sampled(self, tmp_path):
+        run(args_for(tmp_path, **{"--skip-training": True}),
+            load_model=loader, sampler=canned)
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("the baseline was sampled again")
+
+        results = run(args_for(tmp_path, **{"--skip-training": True,
+                                            "--reuse-baseline": True}),
+                      load_model=loader, sampler=forbidden)
+        assert results["baseline"]["accuracy"] == pytest.approx(0.5)
+        assert results["vote_accuracy"] == pytest.approx(0.5)
+
+    def test_a_missing_baseline_says_how_to_produce_one(self, tmp_path):
+        args = args_for(tmp_path, **{"--skip-training": True,
+                                     "--reuse-baseline": True})
+        with pytest.raises(FileNotFoundError,
+                           match="without --reuse-baseline"):
+            run(args, load_model=loader, sampler=canned)
+
+    def test_a_baseline_from_other_problems_is_refused(self, tmp_path):
+        """Reusing across subsets would make the before and after halves
+        of the comparison describe different problems."""
+        run(args_for(tmp_path, **{"--skip-training": True}),
+            load_model=loader, sampler=canned)
+        one = tmp_path / "one.jsonl"
+        one.write_text(json.dumps(P1) + "\n")
+        args = build_parser().parse_args(
+            ["--subset", str(one), "--out-dir", str(tmp_path / "results"),
+             "--n-samples", "3", "--reuse-baseline", "--skip-training"])
+        with pytest.raises(ValueError, match="different problems"):
+            run(args, load_model=loader, sampler=canned)
+
+    def test_a_baseline_at_another_sample_count_is_refused(self, tmp_path):
+        """--n-samples is the candidate set every stage sees, so a
+        baseline drawn at another width is not this run's before."""
+        run(args_for(tmp_path, **{"--skip-training": True}),
+            load_model=loader, sampler=canned)
+        args = build_parser().parse_args(
+            ["--subset", str(subset_file(tmp_path)),
+             "--out-dir", str(tmp_path / "results"),
+             "--n-samples", "2", "--reuse-baseline", "--skip-training"])
+        with pytest.raises(ValueError, match="samples per problem"):
+            run(args, load_model=loader, sampler=canned)
+
+
 class TestCli:
     """Defaults the README and the design audit both name."""
+
+    def test_reuse_baseline_defaults_off(self):
+        assert build_parser().parse_args([]).reuse_baseline is False
 
     def test_defaults(self):
         args = build_parser().parse_args([])

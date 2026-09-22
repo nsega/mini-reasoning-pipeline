@@ -12,7 +12,10 @@ Both evals grade with the same lenient extraction, which is what makes
 before and after comparable; the reward role's boxed-only strictness is
 the trainer's, passed there and not here. The self-consistency stage
 re-reads the records the baseline already stored rather than generating
-again, which is what storing the bundle bought.
+again, which is what storing the bundle bought. --reuse-baseline
+extends that bargain to a whole stage: the baseline eval is
+deterministic in its seed, so a run whose training died reproduces the
+records it already wrote, at the same hour they cost the first time.
 """
 import argparse
 import json
@@ -43,6 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="seeds sampling, so a run repeats")
     parser.add_argument("--skip-training", action="store_true",
                         help="run the inference/eval stages only")
+    parser.add_argument("--reuse-baseline", action="store_true",
+                        help="read the baseline stored under --out-dir "
+                             "instead of running the baseline eval. It "
+                             "asserts the stored records came from this "
+                             "model at this dtype, which they do not "
+                             "record")
     parser.add_argument("--out-dir", default="results")
     return parser
 
@@ -74,6 +83,48 @@ def load_problems(path) -> list[dict]:
     if not problems:
         raise ValueError(f"the subset at {path} holds no problems")
     return problems
+
+
+def load_baseline(out_dir, problems, n_samples: int) -> dict:
+    """Reads a stored baseline back, checking it fits this run.
+
+    Identity is checked as far as the file allows: the problems it
+    graded and the candidate-set width it drew. The model and the dtype
+    behind those records are checked by nobody, because no stage writes
+    them down, so --reuse-baseline is the caller asserting them. A
+    baseline drawn from another policy would be a before half measuring
+    a different model.
+
+    Args:
+        out_dir: Where write_results put it.
+        problems: The problems this run is about to grade.
+        n_samples: The candidate-set size this run asks every stage for.
+
+    Returns:
+        The stored baseline results, shaped as evaluate returned them.
+
+    Raises:
+        FileNotFoundError: if no baseline is stored there.
+        ValueError: if it graded other problems, or drew another width.
+    """
+    path = Path(out_dir) / "baseline.json"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"no baseline at {path} to reuse. Run once without "
+            "--reuse-baseline to write one.")
+    baseline = json.loads(path.read_text())
+    records = baseline["records"]
+    if [r["unique_id"] for r in records] != [p["unique_id"]
+                                             for p in problems]:
+        raise ValueError(
+            f"the baseline at {path} graded different problems than the "
+            "subset holds, so it cannot be this run's before half")
+    widths = {len(r["samples"]) for r in records}
+    if widths != {n_samples}:
+        raise ValueError(
+            f"the baseline at {path} drew {sorted(widths)} samples per "
+            f"problem, not the {n_samples} this run asks for")
+    return baseline
 
 
 def build_scorer(fallback: str | None = EVAL_FALLBACK) -> scorers.Composite:
@@ -118,10 +169,20 @@ def write_results(out_dir, name: str, results: dict) -> Path:
 
 
 def _load_model(name: str):
-    """Loads the policy. The one step no test reaches."""
+    """Loads the policy in float32. The one step no test reaches.
+
+    The dtype is passed rather than left to the library. transformers
+    defaults to the checkpoint's own dtype, and Qwen3 ships bfloat16,
+    whose representable step at these weights is an order of magnitude
+    wider than Adam's 1e-6 update: the optimizer steps, reports a
+    gradient norm, and rounds back to the same weights. float32 is what
+    the trainer's 8.6 GB memory note and the README's timings measured.
+    """
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    return (AutoModelForCausalLM.from_pretrained(name),
+    return (AutoModelForCausalLM.from_pretrained(name,
+                                                 dtype=torch.float32),
             AutoTokenizer.from_pretrained(name))
 
 
@@ -146,9 +207,12 @@ def run(args, *, load_model=_load_model,
     eval_args = dict(n_samples=args.n_samples, fallback=EVAL_FALLBACK,
                      sampler=sampler, seed=args.seed)
 
-    baseline = evaluation.evaluate(model, tokenizer, problems, scorer,
-                                   **eval_args)
-    write_results(args.out_dir, "baseline", baseline)
+    if args.reuse_baseline:
+        baseline = load_baseline(args.out_dir, problems, args.n_samples)
+    else:
+        baseline = evaluation.evaluate(model, tokenizer, problems, scorer,
+                                       **eval_args)
+        write_results(args.out_dir, "baseline", baseline)
     results = {"baseline": baseline,
                "vote_accuracy": vote_accuracy(baseline["records"])}
 
