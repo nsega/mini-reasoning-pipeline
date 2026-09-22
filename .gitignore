@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Pipeline output. Never tracked: --reuse-baseline reads this
+# directory and cannot verify the model or dtype behind a stored
+# baseline, so a committed one would be silently reused by a clone.
+# Curated snapshots live under docs/runs/ instead.
+results/
