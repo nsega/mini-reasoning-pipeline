@@ -19,9 +19,14 @@ README discusses it. The full record is in docs/design-notes.md.
 - Accuracy is reported raw and reweighted to MATH-500's level mix. The
   seed-42 subset skews hard (mean level 3.88 against 3.44 for the full
   set), so the raw number understates the model.
+- Every result carries a provenance stamp. Records used to say nothing
+  about the policy that wrote them, which is how a library default
+  could change the dtype under an unchanged pin and stay hidden behind
+  a plausible-looking number.
 """
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict
+from importlib import metadata
 
 import torch
 
@@ -232,6 +237,64 @@ def _level_reweighted_accuracy(records: Sequence[Mapping]) -> float:
                / total[level] for level in total)
 
 
+def _model_name(model) -> str | None:
+    """The checkpoint the policy came from, where it knows."""
+    config = getattr(model, "config", None)
+    name = getattr(config, "name_or_path", None) or getattr(
+        model, "name_or_path", None)
+    return str(name) if name else None
+
+
+def _model_dtype(model) -> str | None:
+    """The dtype of the policy's first parameter, where it has one."""
+    try:
+        first = next(iter(model.parameters()), None)
+    except (AttributeError, TypeError):
+        return None
+    return str(first.dtype) if first is not None else None
+
+
+def _package_version(name: str) -> str | None:
+    """The installed version, or None where the package is absent."""
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def provenance(model, *, seed, n_samples, fallback) -> dict:
+    """What produced a set of records, for a reader and for a reuse check.
+
+    The fields divide in two. Identity, meaning the model, the dtype and
+    the arguments that decide what was drawn, is what a caller compares
+    before treating stored records as its own before half. The library
+    versions are recorded rather than compared: a patch bump is not by
+    itself a different policy, and refusing reuse on one would make the
+    records unreusable in practice, but whoever has to explain a strange
+    result wants to know them.
+
+    Args:
+        model: The policy. It may be anything the sampler accepts; one
+            that cannot say what it is records None rather than raising,
+            because a stamp must never be a reason an eval cannot run.
+        seed: The seed evaluate was given.
+        n_samples: The candidate-set size every stage saw.
+        fallback: The extraction fallback the grading used.
+
+    Returns:
+        The stamp, JSON-serialisable throughout.
+    """
+    return {
+        "model": _model_name(model),
+        "dtype": _model_dtype(model),
+        "seed": seed,
+        "n_samples": n_samples,
+        "fallback": fallback,
+        "torch": torch.__version__,
+        "transformers": _package_version("transformers"),
+    }
+
+
 def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,
              *, n_samples: int = 7, fallback: str | None = None,
              sampler: Sampler = sample_solutions, seed: int | None = None,
@@ -259,10 +322,10 @@ def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,
             must not lose a long run persists from here.
 
     Returns:
-        A dict with "accuracy", "level_reweighted_accuracy" and
-        "records", one record per problem in input order holding the
-        samples, extracted candidates, scores, selected index and
-        correctness.
+        A dict with "provenance", "accuracy",
+        "level_reweighted_accuracy" and "records", one record per
+        problem in input order holding the samples, extracted
+        candidates, scores, selected index and correctness.
 
     Raises:
         ValueError: if problems is empty, if n_samples is below one, if
@@ -306,6 +369,8 @@ def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,
             on_record(record)
     accuracy = sum(r["correct"] for r in records) / len(records)
     return {
+        "provenance": provenance(model, seed=seed, n_samples=n_samples,
+                                 fallback=fallback),
         "accuracy": accuracy,
         "level_reweighted_accuracy": _level_reweighted_accuracy(records),
         "records": records,

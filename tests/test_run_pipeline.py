@@ -235,6 +235,41 @@ class TestReuseBaseline:
             run(args, load_model=loader, sampler=canned)
 
 
+class TestReusedBaselineProvenance:
+    """The stored stamp is checked, not taken on trust."""
+
+    def test_a_baseline_from_another_dtype_is_refused(self, tmp_path):
+        """The bug this whole guard exists for: transformers changed its
+        default dtype under an unchanged pin, so the same command built
+        a different model. A before half from that model is not this
+        run's before half."""
+        run(args_for(tmp_path, **{"--skip-training": True}),
+            load_model=loader, sampler=canned)
+        stored = tmp_path / "results" / "baseline.json"
+        written = json.loads(stored.read_text())
+        written["provenance"]["dtype"] = "torch.bfloat16"
+        stored.write_text(json.dumps(written))
+        args = args_for(tmp_path, **{"--skip-training": True,
+                                     "--reuse-baseline": True})
+        with pytest.raises(ValueError, match="dtype"):
+            run(args, load_model=loader, sampler=canned)
+
+    def test_a_baseline_without_a_stamp_is_refused(self, tmp_path):
+        """Records written before stamping cannot be checked at all, and
+        the repo's rule is that a missing argument fails toward
+        strictness rather than away from it."""
+        run(args_for(tmp_path, **{"--skip-training": True}),
+            load_model=loader, sampler=canned)
+        stored = tmp_path / "results" / "baseline.json"
+        written = json.loads(stored.read_text())
+        del written["provenance"]
+        stored.write_text(json.dumps(written))
+        args = args_for(tmp_path, **{"--skip-training": True,
+                                     "--reuse-baseline": True})
+        with pytest.raises(ValueError, match="no provenance"):
+            run(args, load_model=loader, sampler=canned)
+
+
 class TestCli:
     """Defaults the README and the design audit both name."""
 

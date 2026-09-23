@@ -76,8 +76,11 @@ apart from this run's baseline with no training involved at all. At
 50 problems, a gain smaller than that is not resolvable, which is the
 honest frame for the 0.320 to 0.240 move above.
 
-## Known gap
+## Why this note exists
 
-`evaluate` does not stamp the model, dtype, seed or library versions
-into what it returns, which is why this file exists and why
-`--reuse-baseline` asserts those rather than checking them.
+`evaluate` did not stamp the model, dtype, seed or library versions
+into what it returned, so the three JSONs beside this file say nothing
+about what produced them and this note has to. Runs after the stamp
+landed carry a `provenance` block and `--reuse-baseline` checks it,
+which is also why these particular records are refused by that flag:
+they predate it.

@@ -48,10 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="run the inference/eval stages only")
     parser.add_argument("--reuse-baseline", action="store_true",
                         help="read the baseline stored under --out-dir "
-                             "instead of running the baseline eval. It "
-                             "asserts the stored records came from this "
-                             "model at this dtype, which they do not "
-                             "record")
+                             "instead of running the baseline eval. The "
+                             "stored provenance is checked against this "
+                             "run, so a baseline from another model, "
+                             "dtype or seed is refused")
     parser.add_argument("--out-dir", default="results")
     return parser
 
@@ -85,27 +85,38 @@ def load_problems(path) -> list[dict]:
     return problems
 
 
-def load_baseline(out_dir, problems, n_samples: int) -> dict:
+COMPARED = ("model", "dtype", "seed", "n_samples", "fallback")
+
+
+def load_baseline(out_dir, problems, expected: dict) -> dict:
     """Reads a stored baseline back, checking it fits this run.
 
-    Identity is checked as far as the file allows: the problems it
-    graded and the candidate-set width it drew. The model and the dtype
-    behind those records are checked by nobody, because no stage writes
-    them down, so --reuse-baseline is the caller asserting them. A
-    baseline drawn from another policy would be a before half measuring
-    a different model.
+    Two kinds of check, in that order. The records are read first, for
+    the problems they graded and the width they drew, because those are
+    evidence. The provenance stamp is read second, because it is a
+    claim, and a file whose claim disagrees with its records fails on
+    the records.
+
+    A stamp is required, not merely compared. Records written before
+    evaluate stamped them cannot be checked at all, and this repo's
+    rule is that a missing argument fails toward strictness: refusing
+    them costs an hour, reusing one silently costs a before half drawn
+    from another model, which is the failure that put the stamp here.
 
     Args:
         out_dir: Where write_results put it.
         problems: The problems this run is about to grade.
-        n_samples: The candidate-set size this run asks every stage for.
+        expected: This run's stamp, from evaluate.provenance. The
+            fields in COMPARED must match; the library versions are
+            recorded on both sides and compared on neither.
 
     Returns:
         The stored baseline results, shaped as evaluate returned them.
 
     Raises:
         FileNotFoundError: if no baseline is stored there.
-        ValueError: if it graded other problems, or drew another width.
+        ValueError: if it graded other problems, drew another width,
+            carries no stamp, or carries one that disagrees.
     """
     path = Path(out_dir) / "baseline.json"
     if not path.exists():
@@ -120,10 +131,24 @@ def load_baseline(out_dir, problems, n_samples: int) -> dict:
             f"the baseline at {path} graded different problems than the "
             "subset holds, so it cannot be this run's before half")
     widths = {len(r["samples"]) for r in records}
-    if widths != {n_samples}:
+    if widths != {expected["n_samples"]}:
         raise ValueError(
             f"the baseline at {path} drew {sorted(widths)} samples per "
-            f"problem, not the {n_samples} this run asks for")
+            f"problem, not the {expected['n_samples']} this run asks for")
+    stamp = baseline.get("provenance")
+    if stamp is None:
+        raise ValueError(
+            f"the baseline at {path} carries no provenance, so the "
+            "model and dtype behind it cannot be checked. It predates "
+            "the stamp: run once without --reuse-baseline to write one "
+            "that can be.")
+    for field in COMPARED:
+        if stamp.get(field) != expected.get(field):
+            raise ValueError(
+                f"the baseline at {path} was drawn with "
+                f"{field}={stamp.get(field)!r} and this run has "
+                f"{field}={expected.get(field)!r}, so it is a before "
+                "half from another run")
     return baseline
 
 
@@ -208,7 +233,11 @@ def run(args, *, load_model=_load_model,
                      sampler=sampler, seed=args.seed)
 
     if args.reuse_baseline:
-        baseline = load_baseline(args.out_dir, problems, args.n_samples)
+        baseline = load_baseline(args.out_dir, problems,
+                                 evaluation.provenance(
+                                     model, seed=args.seed,
+                                     n_samples=args.n_samples,
+                                     fallback=EVAL_FALLBACK))
     else:
         baseline = evaluation.evaluate(model, tokenizer, problems, scorer,
                                        **eval_args)

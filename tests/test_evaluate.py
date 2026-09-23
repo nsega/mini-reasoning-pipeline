@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from mini_reasoning.evaluate import (
-    _eos_ids, evaluate, sequence_logprob_summary,
+    _eos_ids, evaluate, provenance, sequence_logprob_summary,
     token_logprobs_from_logits,
 )
 from mini_reasoning.scorers import (
@@ -372,3 +372,38 @@ class TestLogprobSummary:
         generated = torch.tensor([[5, 0, 0], [5, 6, 7]])
         got = sequence_logprob_summary(logprobs, generated, eos_ids=0)
         assert got.tolist() == pytest.approx([-2.0, -2.0])
+
+
+class TestProvenance:
+    """What produced the records, recorded beside them.
+
+    Nothing in a results file said which model or dtype wrote it, so a
+    stored baseline could only be trusted, never checked. These are the
+    fields that make the check possible.
+    """
+
+    def test_the_result_carries_the_run_s_own_arguments(self):
+        got = evaluate(MODEL, TOKENIZER, [P1], RejectAll(), n_samples=3,
+                       fallback="number", sampler=canned(), seed=7)
+        assert got["provenance"]["seed"] == 7
+        assert got["provenance"]["n_samples"] == 3
+        assert got["provenance"]["fallback"] == "number"
+
+    def test_the_model_and_dtype_are_read_off_the_policy(self):
+        policy = torch.nn.Linear(2, 2).to(torch.float64)
+        policy.config = SimpleNamespace(name_or_path="Qwen/Qwen3-0.6B-Base")
+        got = provenance(policy, seed=None, n_samples=3, fallback=None)
+        assert got["model"] == "Qwen/Qwen3-0.6B-Base"
+        assert got["dtype"] == "torch.float64"
+
+    def test_a_policy_that_cannot_say_records_nothing_rather_than_raising(
+            self):
+        """The eval tests inject a bare object, and a stamp that raised
+        on one would make provenance a reason the pipeline cannot run."""
+        got = provenance(object(), seed=1, n_samples=2, fallback=None)
+        assert got["model"] is None and got["dtype"] is None
+
+    def test_the_library_versions_are_recorded(self):
+        got = provenance(object(), seed=1, n_samples=2, fallback=None)
+        assert got["torch"] == torch.__version__
+        assert "transformers" in got
