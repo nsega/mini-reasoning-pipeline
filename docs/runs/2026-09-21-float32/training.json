@@ -1,0 +1,244 @@
+{
+  "steps": [
+    {
+      "unique_id": "test/number_theory/572.json",
+      "mean_reward": 0.2857142984867096,
+      "grad_norm": 166.59280395507812,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/number_theory/737.json",
+      "mean_reward": 0.1428571492433548,
+      "grad_norm": 110.52599334716797,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/geometry/248.json",
+      "mean_reward": 0.7142857313156128,
+      "grad_norm": 118.71141815185547,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/precalculus/990.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/intermediate_algebra/134.json",
+      "mean_reward": 0.4285714328289032,
+      "grad_norm": 191.73312377929688,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/prealgebra/1558.json",
+      "mean_reward": 0.2857142984867096,
+      "grad_norm": 54.28002166748047,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/algebra/305.json",
+      "mean_reward": 0.2857142984867096,
+      "grad_norm": 121.58861541748047,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/prealgebra/1388.json",
+      "mean_reward": 0.5714285969734192,
+      "grad_norm": 116.56951141357422,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/prealgebra/951.json",
+      "mean_reward": 0.7142857313156128,
+      "grad_norm": 338.4779357910156,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/intermediate_algebra/1168.json",
+      "mean_reward": 0.5714285969734192,
+      "grad_norm": 665.21728515625,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/number_theory/516.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/prealgebra/192.json",
+      "mean_reward": 0.4285714328289032,
+      "grad_norm": 114.68755340576172,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/algebra/1035.json",
+      "mean_reward": 0.1428571492433548,
+      "grad_norm": 82.14859771728516,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/intermediate_algebra/582.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/intermediate_algebra/345.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/counting_and_probability/23957.json",
+      "mean_reward": 0.2857142984867096,
+      "grad_norm": 440.2833557128906,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/algebra/2058.json",
+      "mean_reward": 0.1428571492433548,
+      "grad_norm": 139.4332275390625,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/intermediate_algebra/1898.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/prealgebra/1733.json",
+      "mean_reward": 0.1428571492433548,
+      "grad_norm": 81.3986587524414,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/algebra/2232.json",
+      "mean_reward": 0.7142857313156128,
+      "grad_norm": 167.27061462402344,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/number_theory/156.json",
+      "mean_reward": 0.2857142984867096,
+      "grad_norm": 721.9152221679688,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/counting_and_probability/159.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/algebra/841.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/algebra/351.json",
+      "mean_reward": 0.7142857313156128,
+      "grad_norm": 845.0347290039062,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/algebra/1082.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/intermediate_algebra/2196.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/counting_and_probability/765.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/prealgebra/1436.json",
+      "mean_reward": 0.2857142984867096,
+      "grad_norm": 653.7529296875,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/prealgebra/2057.json",
+      "mean_reward": 0.4285714328289032,
+      "grad_norm": 522.1344604492188,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/algebra/694.json",
+      "mean_reward": 0.4285714328289032,
+      "grad_norm": 128.81947326660156,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/prealgebra/1512.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/number_theory/631.json",
+      "mean_reward": 0.1428571492433548,
+      "grad_norm": 99.07918548583984,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/prealgebra/1044.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/prealgebra/465.json",
+      "mean_reward": 0.1428571492433548,
+      "grad_norm": 63.938053131103516,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/geometry/711.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/intermediate_algebra/117.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/intermediate_algebra/190.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/algebra/1338.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    },
+    {
+      "unique_id": "test/prealgebra/1353.json",
+      "mean_reward": 0.1428571492433548,
+      "grad_norm": 132.9561309814453,
+      "stepped": true
+    },
+    {
+      "unique_id": "test/intermediate_algebra/1407.json",
+      "mean_reward": 0.0,
+      "grad_norm": 0.0,
+      "stepped": false
+    }
+  ]
+}
