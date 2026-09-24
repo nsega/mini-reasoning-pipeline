@@ -51,6 +51,25 @@ Six discordant pairs, McNemar exact p = 0.219. **The decline is not
 separable from noise.** Training produced no measurable gain; it did
 not measurably hurt either.
 
+Scored per sample instead, and split by what training did to each
+problem (`report.json` beside this note, rebuilt by
+`python -m mini_reasoning.report` on this directory), the picture
+changes sign and shape:
+
+| group | n | eval grader | boxed reward |
+|---|---|---|---|
+| all | 50 | 0.160 -> 0.186 (+0.026, p 0.212) | 0.140 -> 0.163 (+0.023, p 0.261) |
+| stepped | 23 | 0.273 -> 0.329 (+0.056, p 0.155) | 0.236 -> 0.298 (+0.062, p 0.100) |
+| flat | 17 | 0.025 -> 0.017 (-0.008, p 1.000) | 0.017 -> 0.017 (+0.000, p 1.000) |
+| untouched | 10 | 0.129 -> 0.143 (+0.014, p 1.000) | 0.129 -> 0.100 (-0.029, p 0.745) |
+
+The selected answer fell while the samples behind it rose, so the
+headline's direction was never a finding. The rise sits where training
+got gradient, on the reward it optimised, and nowhere else: suggestive
+at p = 0.10, not established. The flat problems are out of reach rather
+than unlucky, since 16 of the 17 also score zero boxed reward in the
+independent baseline draw.
+
 ## What the numbers do not say
 
 **The reward curve is confounded by problem order.** Mean reward falls

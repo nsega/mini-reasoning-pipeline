@@ -167,6 +167,22 @@ class TestTrainingGate:
         out = tmp_path / "results" / "training.json"
         assert json.loads(out.read_text())["steps"][0]["unique_id"] == "p1"
 
+    def test_a_trained_run_reports_by_group(self, tmp_path):
+        """Training on the eval subset makes one blended number mix what
+        training touched with what it never saw, so the run splits it."""
+        args = args_for(tmp_path, **{"--steps": 1})
+        results = run(args, load_model=loader, sampler=canned,
+                      rollout=canned_rollout)
+        written = json.loads(
+            (tmp_path / "results" / "report.json").read_text())
+        assert written == results["report"]
+        assert written["groups"]["untouched"] == ["p2"]
+
+    def test_an_untrained_run_writes_no_report(self, tmp_path):
+        run(args_for(tmp_path, **{"--skip-training": True}),
+            load_model=loader, sampler=canned)
+        assert not (tmp_path / "results" / "report.json").exists()
+
 
 class TestResults:
     """A run leaves the records behind, because re-analysis needs them."""

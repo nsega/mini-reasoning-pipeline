@@ -1,0 +1,122 @@
+{
+  "groups": {
+    "stepped": [
+      "test/number_theory/572.json",
+      "test/number_theory/737.json",
+      "test/geometry/248.json",
+      "test/intermediate_algebra/134.json",
+      "test/prealgebra/1558.json",
+      "test/algebra/305.json",
+      "test/prealgebra/1388.json",
+      "test/prealgebra/951.json",
+      "test/intermediate_algebra/1168.json",
+      "test/prealgebra/192.json",
+      "test/algebra/1035.json",
+      "test/counting_and_probability/23957.json",
+      "test/algebra/2058.json",
+      "test/prealgebra/1733.json",
+      "test/algebra/2232.json",
+      "test/number_theory/156.json",
+      "test/algebra/351.json",
+      "test/prealgebra/1436.json",
+      "test/prealgebra/2057.json",
+      "test/algebra/694.json",
+      "test/number_theory/631.json",
+      "test/prealgebra/465.json",
+      "test/prealgebra/1353.json"
+    ],
+    "flat": [
+      "test/precalculus/990.json",
+      "test/number_theory/516.json",
+      "test/intermediate_algebra/582.json",
+      "test/intermediate_algebra/345.json",
+      "test/intermediate_algebra/1898.json",
+      "test/counting_and_probability/159.json",
+      "test/algebra/841.json",
+      "test/algebra/1082.json",
+      "test/intermediate_algebra/2196.json",
+      "test/counting_and_probability/765.json",
+      "test/prealgebra/1512.json",
+      "test/prealgebra/1044.json",
+      "test/geometry/711.json",
+      "test/intermediate_algebra/117.json",
+      "test/intermediate_algebra/190.json",
+      "test/algebra/1338.json",
+      "test/intermediate_algebra/1407.json"
+    ],
+    "untouched": [
+      "test/number_theory/109.json",
+      "test/number_theory/1185.json",
+      "test/prealgebra/1865.json",
+      "test/algebra/1031.json",
+      "test/algebra/853.json",
+      "test/intermediate_algebra/2146.json",
+      "test/algebra/2391.json",
+      "test/intermediate_algebra/1779.json",
+      "test/intermediate_algebra/1102.json",
+      "test/intermediate_algebra/1350.json"
+    ]
+  },
+  "comparisons": {
+    "all": {
+      "n": 50,
+      "eval": {
+        "before": 0.16,
+        "after": 0.1857142857142857,
+        "delta": 0.02571428571428571,
+        "p": 0.2120893955302235
+      },
+      "reward": {
+        "before": 0.14,
+        "after": 0.16285714285714284,
+        "delta": 0.022857142857142857,
+        "p": 0.26088695565221737
+      }
+    },
+    "stepped": {
+      "n": 23,
+      "eval": {
+        "before": 0.2732919254658385,
+        "after": 0.32919254658385094,
+        "delta": 0.05590062111801242,
+        "p": 0.15549222538873056
+      },
+      "reward": {
+        "before": 0.2360248447204969,
+        "after": 0.2981366459627329,
+        "delta": 0.062111801242236024,
+        "p": 0.10019499025048748
+      }
+    },
+    "flat": {
+      "n": 17,
+      "eval": {
+        "before": 0.025210084033613443,
+        "after": 0.01680672268907563,
+        "delta": -0.008403361344537815,
+        "p": 1.0
+      },
+      "reward": {
+        "before": 0.01680672268907563,
+        "after": 0.01680672268907563,
+        "delta": 0.0,
+        "p": 1.0
+      }
+    },
+    "untouched": {
+      "n": 10,
+      "eval": {
+        "before": 0.12857142857142856,
+        "after": 0.14285714285714285,
+        "delta": 0.01428571428571429,
+        "p": 1.0
+      },
+      "reward": {
+        "before": 0.12857142857142856,
+        "after": 0.1,
+        "delta": -0.02857142857142857,
+        "p": 0.7450127493625319
+      }
+    }
+  }
+}

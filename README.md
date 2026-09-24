@@ -63,7 +63,17 @@ uv run python run_pipeline.py
 
 # Or the inference and evaluation stages alone:
 uv run python run_pipeline.py --skip-training
+
+# Re-report a stored run, no model needed:
+uv run python -m mini_reasoning.report docs/runs/2026-09-21-float32
 ```
+
+A run that trains ends with `report.json`, the before/after split by
+what training did to each problem: stepped on, drawn but skipped as
+flat, or never drawn. The pipeline trains on the subset it evaluates,
+so one blended number mixes what training touched with the only
+problems it never saw; the split keeps them apart, and scores every
+stored sample rather than one selected answer per problem.
 
 The evaluation subset is committed, so neither command regenerates it.
 It is rebuilt only if the recipe itself ever changes, which is a thing
