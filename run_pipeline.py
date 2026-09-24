@@ -7,6 +7,7 @@ where the records land.
 
     baseline eval (role 1)  -> self-consistency over those records
     -> GRPO training (role 2) -> validation eval (role 3)
+    -> the before/after, split by what training did to each problem
 
 Both evals grade with the same lenient extraction, which is what makes
 before and after comparable; the reward role's boxed-only strictness is
@@ -22,7 +23,7 @@ import json
 from pathlib import Path
 
 from mini_reasoning import (
-    consistency, evaluate as evaluation, scorers, trainer,
+    consistency, evaluate as evaluation, report, scorers, trainer,
 )
 
 EVAL_FALLBACK = "number"
@@ -224,7 +225,7 @@ def run(args, *, load_model=_load_model,
 
     Returns:
         The stage results: "baseline" and "vote_accuracy" always, plus
-        "training" and "validation" when training ran.
+        "training", "validation" and "report" when training ran.
     """
     problems = load_problems(args.subset)
     model, tokenizer = load_model(args.model)
@@ -258,6 +259,10 @@ def run(args, *, load_model=_load_model,
                                      **eval_args)
     write_results(args.out_dir, "validation", validation)
     results["validation"] = validation
+
+    breakdown = report.report(baseline, validation, history)
+    write_results(args.out_dir, "report", breakdown)
+    results["report"] = breakdown
     return results
 
 
@@ -276,6 +281,8 @@ def main():
               f"{results['validation']['accuracy']:.3f}")
         print("level-reweighted       "
               f"{results['validation']['level_reweighted_accuracy']:.3f}")
+        print()
+        print(report.format_table(results["report"]))
 
 
 if __name__ == "__main__":
