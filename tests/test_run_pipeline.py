@@ -158,7 +158,7 @@ class TestTrainingGate:
         args = args_for(tmp_path, **{"--steps": 2})
         results = run(args, load_model=loader, sampler=canned,
                       rollout=canned_rollout)
-        assert len(results["training"]["steps"]) == 2
+        assert results["training"]["updates"] == 2
         assert results["validation"]["accuracy"] == pytest.approx(0.5)
 
     def test_the_training_history_is_written_out(self, tmp_path):
