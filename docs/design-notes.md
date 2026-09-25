@@ -284,23 +284,25 @@ Reweighting does not reduce variance; a level with three problems in the subset 
 ## What the trainer does with a flat group
 
 **Decision.**
-A group whose advantages are all zero is skipped outright: no backward pass, and no optimizer step. Every other group runs one backward per rollout, each scaled by 1/G, then a clip to norm 1.0 and one step.
+A group whose advantages are all zero is skipped outright: no backward pass, and no optimizer step. Every other group runs one backward per rollout, each scaled by 1/G, then a clip to norm 1.0 and one step. A skipped group also retires its problem for the rest of the run, and the budget counts optimizer updates rather than draws, so training passes over the pool again for the problems that still give gradient.
 
 **Rejected.**
 Stepping anyway on the zero gradient that a flat group produces. This is the version that looks correct and is not: Adam carries momentum, so a step taken on an all-zero gradient still moves every weight by the decayed average of previous steps. The whole reason [What group_relative_advantages calls flat](#what-group_relative_advantages-calls-flat) insists on exact zeros is that an all-same-reward group must not move the policy, and an optimizer step would undo that guarantee one layer up.
 Running the backward pass and skipping only the step. It costs a full backward per flat group to compute a gradient already known to be zero, and with a binary reward flat groups are the common case, not the exception.
 Raising on a flat group. The trainer steps through them by design; with a binary reward a problem the policy always gets right, or always gets wrong, is an ordinary thing to encounter.
+Redrawing a flat problem on every pass. It protects a problem that was flat by chance, since one solved 10% of the time comes out flat 48% of the time at seven rollouts, but it pays a generation per redraw on problems that are almost all out of reach.
 
 **Evidence.**
 (1) The guarantee is only as strong as its weakest layer: `group_relative_advantages` returns exact zeros, `grpo_loss` turns them into a zero gradient, and an optimizer with state would still move the weights. The skip is where that chain is actually closed.
 (2) Measured on the cached base model: a problem whose rollouts all scored zero reported a pre-clip norm of 0.0 and took no step, while an answerable one moved all 310 parameter tensors.
 (3) With no KL term there is nothing else acting on a zero-advantage step, which is what makes "no step" the correct behaviour rather than merely a cheap one.
+(4) In the first float32 run, 17 of 40 draws were flat, and 16 of those 17 problems also scored zero boxed reward in the independent baseline eval: at this scale a problem flat once is flat for good, so retiring it costs about one wrongly retired problem in seventeen.
 
 **Cost accepted.**
-A run's step count is an upper bound rather than a count of updates, so the history has to say which steps actually moved the policy, and it does. A schedule keyed to the optimizer's step count advances differently from one keyed to the loop's, and nothing here uses a schedule yet.
+Updates are exact and draws are the upper bound: `--steps` counts optimizer updates, `--max-draws` caps the draws spent reaching them, and the history records which limit ended the run. About one chance-flat problem in seventeen is retired wrongly. A schedule keyed to the optimizer's step count now agrees with the budget, and nothing here uses one yet.
 
 **Pinned by.**
-`TestFlatGroups` in `tests/test_trainer.py`, over a real tiny policy and a real Adam optimizer: a flat group after a live one leaves every parameter equal, and a split group does not. The first fails if the step is taken on zeros, which is the mistake the test exists for.
+`TestFlatGroups` in `tests/test_trainer.py`, over a real tiny policy and a real Adam optimizer: a flat group after a live one leaves every parameter equal, and a split group does not. The first fails if the step is taken on zeros, which is the mistake the test exists for. `TestDynamicSampling`, `TestStopping` and `TestSeeding` in the same file pin retirement, the three limits in their order, and the per-draw seed.
 
 ## What the trainer feeds the loss
 
@@ -325,6 +327,26 @@ Nothing here measures a KL divergence at all, so a run cannot report how far the
 
 **Pinned by.**
 `TestSequenceLogprobs`, `TestAccumulation` and `TestClipping` in `tests/test_trainer.py`: one differentiable scalar per rollout whose scale does not follow length, accumulation matching a batched call, and the clip bounding what reaches the weights, asserted on the parameter delta rather than on gradient buffers.
+
+## The held-out split
+
+**Decision.**
+The last `--held-out` problems of the frozen subset, ten by default, are kept from training and from nothing else: both evals still grade all fifty. The last ten are exactly the problems the first float32 run never drew, so that run is this one's control, with the same pool, the same held-out set and the same eval, and the one variable between them is how training reaches the pool.
+
+**Rejected.**
+An external training pool from MATH's training split. Every eval problem would be held out and the pool would never run dry, but the train-on-test measurement the report keeps would be lost, and a second frozen artifact would need its own generator and pins.
+A level-stratified seeded draw, at ten or twenty. More representative, or more sensitive, but either breaks comparability with the committed run by changing the pool and the held-out set at once.
+Pre-filtering training problems from the stored baseline. It selects with the eval's own draw, so validation regresses toward the mean on exactly the groups the report compares.
+
+**Evidence.**
+(1) The held-out result can only ever be directional. The per-problem change in boxed reward has a standard deviation of 0.124 in the committed run, so a held-out group of k problems detects, at 80% power, an effect of about 2.8 × 0.124 / √k: 10.9 points at ten, 7.7 at twenty, 4.9 at all fifty. The trained problems moved 6.2 points, and a generalization effect is normally smaller than that.
+(2) Dynamic sampling makes the reservation necessary rather than cosmetic. The first run left problems 41-50 untouched only because forty draws in file order stop at forty, and a second pass would have reached them.
+
+**Cost accepted.**
+A held-out gain or loss here is a direction, not a finding, whatever its p. The split stays because it keeps training off those ten problems and keeps the report's two claims apart.
+
+**Pinned by.**
+`test_the_default_holds_out_what_the_committed_run_never_drew` in `tests/test_run_pipeline.py` reads the committed run's training history, so the control relationship fails loudly if the subset's order or the default ever moves. `test_a_reserved_problem_that_was_drawn_is_refused` in `tests/test_report.py` refuses a history that broke the reservation.
 
 ## What the entry point owns
 

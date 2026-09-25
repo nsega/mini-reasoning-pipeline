@@ -75,6 +75,14 @@ so one blended number mixes what training touched with the only
 problems it never saw; the split keeps them apart, and scores every
 stored sample rather than one selected answer per problem.
 
+Training draws only from the first 40 problems: `--held-out 10`, the
+default, reserves the last ten, and both evals still grade all fifty.
+`--steps` counts optimizer updates rather than draws. A problem whose
+seven rollouts all score the same gives no gradient and is retired for
+the rest of the run, so training passes over the pool again until it
+reaches 40 updates, runs out of live problems, or hits `--max-draws`,
+three times `--steps` by default.
+
 The evaluation subset is committed, so neither command regenerates it.
 It is rebuilt only if the recipe itself ever changes, which is a thing
 this experiment does not do mid-flight:
@@ -100,9 +108,12 @@ rollouts each, plus a backward pass per rollout, since the trainer
 runs them one at a time. Budget nearer three times a single eval, not
 twice. Measured end to end on an M4 Pro at float32: 57 minutes for the
 baseline eval, 44 for the 40 GRPO steps, 54 for the validation eval,
-two and a half hours in all. The same work at the same seed has varied
-by 25 minutes between runs on this machine, so these are a floor
-rather than a clock. Per-problem cost tracks difficulty, because
+two and a half hours in all. Those were measured before dynamic
+sampling, when training stopped at 40 draws; it now runs to 40
+optimizer updates, so the training stage takes longer, and the next
+measured run replaces these figures. The same work at the same seed
+has varied by 25 minutes between runs on this machine, so these are a
+floor rather than a clock. Per-problem cost tracks difficulty, because
 harder problems run longer before they stop: samples average 666
 characters at level 1 against 1187 at level 5, and this subset is
 back-loaded with 36 of its 50 problems at levels 4 and 5. Training
