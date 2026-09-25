@@ -430,3 +430,27 @@ class TestHeldOutWiring:
                       load_model=loader, sampler=canned,
                       rollout=canned_rollout)
         assert results["report"]["groups"]["held_out"] == ["p2"]
+
+
+class TestSeedStreams:
+    """Training draws from its own random stream, never the eval's."""
+
+    def test_training_never_reuses_an_eval_seed(self, tmp_path):
+        """Found in review. The evals seed problem i with seed + i, and
+        training seeded draw d with seed + d through the same sampling
+        call, so the first pass replayed the baseline's own samples and
+        first-pass retirement became the pre-filter the design rejects."""
+        eval_seeds, train_seeds = [], []
+
+        def sampler(model, tokenizer, problem, n):
+            eval_seeds.append(torch.initial_seed())
+            return canned(model, tokenizer, problem, n)
+
+        def rollout(model, tokenizer, problem, n):
+            train_seeds.append(torch.initial_seed())
+            return canned_rollout(model, tokenizer, problem, n)
+
+        run(args_for(tmp_path, **{"--steps": 3}), load_model=loader,
+            sampler=sampler, rollout=rollout)
+        assert train_seeds and eval_seeds
+        assert not set(eval_seeds) & set(train_seeds)

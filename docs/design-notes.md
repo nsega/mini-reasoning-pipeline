@@ -336,11 +336,12 @@ The last `--held-out` problems of the frozen subset, ten by default, are kept fr
 **Rejected.**
 An external training pool from MATH's training split. Every eval problem would be held out and the pool would never run dry, but the train-on-test measurement the report keeps would be lost, and a second frozen artifact would need its own generator and pins.
 A level-stratified seeded draw, at ten or twenty. More representative, or more sensitive, but either breaks comparability with the committed run by changing the pool and the held-out set at once.
-Pre-filtering training problems from the stored baseline. It selects with the eval's own draw, so validation regresses toward the mean on exactly the groups the report compares.
+Pre-filtering training problems from the stored baseline. It chooses what training sees by the before half's own draw, so group membership carries that draw's noise into the comparison the report makes.
 
 **Evidence.**
 (1) The held-out result can only ever be directional. The per-problem change in boxed reward has a standard deviation of 0.124 in the committed run, so a held-out group of k problems detects, at 80% power, an effect of about 2.8 × 0.124 / √k: 10.9 points at ten, 7.7 at twenty, 4.9 at all fifty. The trained problems moved 6.2 points, and a generalization effect is normally smaller than that.
 (2) Dynamic sampling makes the reservation necessary rather than cosmetic. The first run left problems 41-50 untouched only because forty draws in file order stop at forty, and a second pass would have reached them.
+(3) Training's draws are seeded from `--seed` plus the subset's size, so its stream starts where the evals' per-problem seeds end. Seeded from `--seed` itself, draw d and the baseline's problem d shared a seed, a prompt and a sampling call, so the first pass replayed the baseline's own samples: retirement would have been decided on the eval's draw, the pre-filter rejected above, arrived at by accident. The final review found it; `test_training_never_reuses_an_eval_seed` pins it.
 
 **Cost accepted.**
 A held-out gain or loss here is a direction, not a finding, whatever its p. The split stays because it keeps training off those ten problems and keeps the report's two claims apart.

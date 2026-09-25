@@ -18,7 +18,7 @@
 - `--held-out` defaults to 10 and reserves the last N problems in subset file order. Both evals always run over every problem.
 - `--steps` counts optimizer updates. `--max-draws` defaults to 3 × `--steps` and may sit below it.
 - Stop reasons are exactly `"updates"`, `"max_draws"`, `"pool_exhausted"`, checked in that order.
-- Each draw is seeded with `torch.manual_seed(seed + draw)`, `draw` counted from 0, when a seed is given.
+- Each draw is seeded with `torch.manual_seed(seed + draw)`, `draw` counted from 0, when a seed is given. (Amended after the final review: `run()` passes `--seed` plus the subset's size, so training's stream never overlaps the evals' per-problem seeds.)
 - The history keeps its per-draw list under `"steps"` and adds `"updates"`, `"draws"`, `"stopped"`, and, from `run_pipeline.py`, `"held_out"`: always present, `[]` under `--held-out 0`.
 - `docs/runs/2026-09-21-float32/report.json` must regenerate byte-identical.
 - No estimated number replaces a measured one in `README.md`.

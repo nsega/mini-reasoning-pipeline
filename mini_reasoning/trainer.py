@@ -219,7 +219,9 @@ def train(model, tokenizer, problems, *, steps: int, rollout,
         max_draws: A runtime cap on draws; None means 3 * steps. It may
             sit below steps.
         seed: Seeds each draw as seed + draw; None leaves the global
-            RNG alone.
+            RNG alone. The caller keeps this stream apart from any other
+            stage's seeds: a draw sharing an eval's seed and sampling
+            call replays that eval's samples.
 
     Returns:
         "steps", one report per draw in order (the name predates dynamic
