@@ -34,6 +34,21 @@ from mini_reasoning import (
 EVAL_FALLBACK = "number"
 
 
+def positive_int(text: str) -> int:
+    """An argparse type for counts that must be at least one.
+
+    Checked at parse time because the stage that would otherwise refuse
+    the value runs after the model load and the hour-long baseline eval.
+
+    Raises:
+        argparse.ArgumentTypeError: if the value is below one.
+    """
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The CLI. --n-samples sets the candidate set every stage sees."""
     parser = argparse.ArgumentParser(
@@ -41,12 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
                     "self-consistency -> GRPO -> before/after eval")
     parser.add_argument("--subset", default="data/math500_subset50.jsonl")
     parser.add_argument("--model", default="Qwen/Qwen3-0.6B-Base")
-    parser.add_argument("--steps", type=int, default=40,
+    parser.add_argument("--steps", type=positive_int, default=40,
                         help="GRPO optimizer updates. A flat group takes "
                              "no update and retires its problem, so "
                              "training draws until this many updates, "
                              "--max-draws, or no live problem is left")
-    parser.add_argument("--max-draws", type=int, default=None,
+    parser.add_argument("--max-draws", type=positive_int, default=None,
                         help="cap on training draws, a runtime backstop; "
                              "default 3 x --steps")
     parser.add_argument("--held-out", type=int, default=10,

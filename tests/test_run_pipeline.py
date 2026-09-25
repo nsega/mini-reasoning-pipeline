@@ -318,6 +318,18 @@ class TestCli:
         args = build_parser().parse_args([])
         assert args.held_out == 10 and args.max_draws is None
 
+    def test_a_draw_cap_below_one_is_refused_at_parse_time(self):
+        """Found in review: train() refused it, but only after the model
+        load and the hour-long baseline eval. 0 is a plausible guess at
+        "no cap", so it has to fail before anything runs."""
+        for bad in ("0", "-5"):
+            with pytest.raises(SystemExit):
+                build_parser().parse_args(["--max-draws", bad])
+
+    def test_steps_below_one_are_refused_at_parse_time(self):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["--steps", "0"])
+
 
 class TestHeldOutSplit:
     """The last N problems are reserved; only the rest are trained on."""
