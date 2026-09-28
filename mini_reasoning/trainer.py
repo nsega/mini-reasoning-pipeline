@@ -22,6 +22,9 @@ decisions are recorded in docs/design-notes.md.
 - A flat group is skipped entirely rather than stepped on a zero
   gradient: Adam carries momentum, so a step taken on zeros still moves
   the weights, and an all-same-reward group must not move anything.
+- A flat problem is also retired, and the budget counts updates rather
+  than draws, so training makes further passes over the problems that
+  still give gradient instead of spending draws on ones that do not.
 """
 from dataclasses import dataclass
 
@@ -188,35 +191,82 @@ def train_step(model, optimizer, problem, tokenizer, *, rollout,
 
 def train(model, tokenizer, problems, *, steps: int, rollout,
           group_size: int = 7, lr: float = 1e-6,
-          max_grad_norm: float = MAX_GRAD_NORM) -> dict:
-    """Runs `steps` GRPO steps, cycling the problems in order.
+          max_grad_norm: float = MAX_GRAD_NORM,
+          max_draws: int | None = None, seed: int | None = None) -> dict:
+    """Runs GRPO until `steps` updates, cycling the problems in order.
+
+    A draw whose group is flat takes no step and retires its problem for
+    the rest of the run, whether every rollout was wrong or every one
+    was right: neither gives a gradient, and at this scale a problem
+    flat once is almost always flat again. The budget counts updates
+    rather than draws, so the loop makes further passes over the
+    problems that still give gradient, until the first of three limits:
+    `steps` updates, `max_draws` draws, or no live problem left.
+
+    Each draw is seeded from `seed` plus its index, counting from 0, so
+    which problems retire repeats, and a run that skipped the baseline
+    eval trains exactly like one that ran it.
 
     Args:
         model: The policy to train, in place.
         tokenizer: Passed through to the rollout function.
-        problems: The training problems, cycled if steps exceeds them.
-        steps: Number of optimizer steps to attempt.
+        problems: The training pool, cycled in order.
+        steps: Optimizer updates to reach.
         rollout: Returns Rollouts for (model, tokenizer, problem, n).
         group_size: Rollouts per problem.
         lr: Adam learning rate.
         max_grad_norm: The clip bound.
+        max_draws: A runtime cap on draws; None means 3 * steps. It may
+            sit below steps.
+        seed: Seeds each draw as seed + draw; None leaves the global
+            RNG alone. The caller keeps this stream apart from any other
+            stage's seeds: a draw sharing an eval's seed and sampling
+            call replays that eval's samples.
 
     Returns:
-        {"steps": [...]}, one report per attempted step in order.
+        "steps", one report per draw in order (the name predates dynamic
+        sampling, and stored runs depend on it), and "updates", "draws"
+        and "stopped": which limit ended the run, "updates",
+        "max_draws" or "pool_exhausted", checked in that order.
 
     Raises:
-        ValueError: if steps is below one or problems is empty.
+        ValueError: if steps or max_draws is below one, or problems is
+            empty.
     """
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")
     if not problems:
         raise ValueError("train needs at least one problem")
+    if max_draws is None:
+        max_draws = 3 * steps
+    if max_draws < 1:
+        raise ValueError(f"max_draws must be >= 1, got {max_draws}")
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     model.train()
-    history = []
-    for step in range(steps):
-        history.append(train_step(
-            model, optimizer, problems[step % len(problems)], tokenizer,
-            rollout=rollout, group_size=group_size,
-            max_grad_norm=max_grad_norm))
-    return {"steps": history}
+    pool = {p["unique_id"] for p in problems}
+    history, retired = [], set()
+    updates = draws = position = 0
+    while updates < steps and draws < max_draws and retired != pool:
+        problem = problems[position % len(problems)]
+        position += 1
+        if problem["unique_id"] in retired:
+            continue
+        if seed is not None:
+            torch.manual_seed(seed + draws)
+        report = train_step(model, optimizer, problem, tokenizer,
+                            rollout=rollout, group_size=group_size,
+                            max_grad_norm=max_grad_norm)
+        history.append(report)
+        draws += 1
+        if report["stepped"]:
+            updates += 1
+        else:
+            retired.add(problem["unique_id"])
+    if updates == steps:
+        stopped = "updates"
+    elif draws == max_draws:
+        stopped = "max_draws"
+    else:
+        stopped = "pool_exhausted"
+    return {"steps": history, "updates": updates, "draws": draws,
+            "stopped": stopped}

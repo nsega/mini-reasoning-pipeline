@@ -8,12 +8,17 @@ two per-sample graders and where they disagree, and that the report
 can be rebuilt offline from a stored run.
 """
 import json
+from pathlib import Path
 
 import pytest
 
 from mini_reasoning.report import (
-    GROUPS, format_table, main, report, sample_scores, training_groups,
+    GROUPS, SPLIT_GROUPS, format_table, main, report, sample_scores,
+    training_groups,
 )
+
+COMMITTED_RUN = (Path(__file__).resolve().parents[1]
+                 / "docs" / "runs" / "2026-09-21-float32")
 
 
 def record(uid, answer, texts, candidates):
@@ -195,3 +200,92 @@ class TestOffline:
             json.dumps(evaluation(scored("p1", 1))))
         with pytest.raises(FileNotFoundError, match="validation.json"):
             main([str(tmp_path)])
+
+
+class TestHeldOut:
+    """A reserved split, read from the history rather than inferred."""
+
+    def test_a_split_history_yields_four_groups(self):
+        groups = training_groups(
+            ["p1", "p2", "p3", "p4"],
+            [step("p1", True), step("p2", False)],
+            held_out=["p4"])
+        assert groups == {"stepped": ["p1"], "flat": ["p2"],
+                          "held_out": ["p4"], "untouched": ["p3"]}
+
+    def test_held_out_comes_from_the_reservation_not_the_draws(self):
+        """Never drawn is what untouched means. Reserved is a promise, so
+        a reserved problem is held out even when nothing else was drawn
+        either."""
+        groups = training_groups(["p1", "p2"], [], held_out=["p2"])
+        assert groups["held_out"] == ["p2"]
+        assert groups["untouched"] == ["p1"]
+
+    def test_a_reserved_problem_that_was_drawn_is_refused(self):
+        """The split exists so training cannot reach these problems. A
+        history that reached one broke that guarantee, and reporting it
+        in two groups at once would hide the breach."""
+        with pytest.raises(ValueError, match="p2"):
+            training_groups(["p1", "p2"], [step("p2", True)],
+                            held_out=["p2"])
+
+    def test_an_empty_reservation_still_uses_the_split_format(self):
+        """--held-out 0 writes held_out: [], which says a split was asked
+        for and none was made, rather than looking like an old run."""
+        got = report(evaluation(scored("p1", 1)),
+                     evaluation(scored("p1", 2)),
+                     {"steps": [step("p1", True)], "held_out": []})
+        assert tuple(got["groups"]) == SPLIT_GROUPS
+        assert got["comparisons"]["held_out"]["n"] == 0
+
+    def test_a_split_report_compares_every_split_group(self):
+        got = report(evaluation(scored("p1", 1), scored("p2", 1)),
+                     evaluation(scored("p1", 3), scored("p2", 2)),
+                     {"steps": [step("p1", True)], "held_out": ["p2"]})
+        assert set(got["comparisons"]) == {"all", *SPLIT_GROUPS}
+        assert got["comparisons"]["held_out"]["reward"]["delta"] == (
+            pytest.approx(0.25))
+
+
+class TestOldRuns:
+    """Runs written before the split keep the report they had."""
+
+    def test_a_history_without_a_reservation_keeps_three_groups(self):
+        got = report(evaluation(scored("p1", 1)),
+                     evaluation(scored("p1", 2)),
+                     {"steps": [step("p1", True)]})
+        assert tuple(got["groups"]) == GROUPS
+
+    def test_the_committed_run_regenerates_byte_identical(self):
+        """The cleanest proof that the split moved no number in the
+        analysis already published."""
+        loaded = {name: json.loads((COMMITTED_RUN / f"{name}.json")
+                                   .read_text())
+                  for name in ("baseline", "validation", "training")}
+        rebuilt = json.dumps(report(loaded["baseline"],
+                                    loaded["validation"],
+                                    loaded["training"]), indent=2) + "\n"
+        assert rebuilt == (COMMITTED_RUN / "report.json").read_text()
+
+
+class TestSplitTable:
+    """The printed rows for a split run."""
+
+    def test_an_empty_reservation_says_nothing_was_reserved(self):
+        got = format_table(report(
+            evaluation(scored("p1", 1)), evaluation(scored("p1", 2)),
+            {"steps": [step("p1", True)], "held_out": []}))
+        line = next(row for row in got.splitlines()
+                    if row.startswith("held_out"))
+        assert "nothing was reserved" in line
+
+    def test_an_empty_untouched_speaks_only_of_the_pool(self):
+        """Held-out problems have their own row in a split run, so the
+        untouched row must not make claims about them."""
+        got = format_table(report(
+            evaluation(scored("p1", 1), scored("p2", 1)),
+            evaluation(scored("p1", 2), scored("p2", 1)),
+            {"steps": [step("p1", True)], "held_out": ["p2"]}))
+        line = next(row for row in got.splitlines()
+                    if row.startswith("untouched"))
+        assert "in its pool" in line and "held out" not in line

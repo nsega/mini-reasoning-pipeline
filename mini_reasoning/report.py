@@ -16,11 +16,12 @@ problems rose, untouched ones fell, and the blend read as a decline.
   fallback that eval used. "reward" re-extracts boxed-only, the reward's
   strictness, which is what training optimised. Where they disagree is
   the bare-number rescue the eval grants and the reward does not.
-- Groups are derived from the training history, not reserved. Untouched
-  is whatever training happened not to reach, and at enough steps that
-  is nothing: the report then says so rather than inventing a held-out
-  set. A reserved split belongs with any change that draws beyond the
-  first pass, such as resampling flat groups, which would reach it.
+- Groups come from the training history. A run with a reserved split
+  records it as held_out, and those problems form their own group,
+  checked never to have been drawn; untouched is then only the pool
+  problems training happened not to reach. A history written before
+  splits existed has no held_out and keeps the three groups it was
+  reported with.
 - Uncertainty is a paired sign-flip test on the per-problem changes,
   seeded, so the same records always give the same p.
 
@@ -37,40 +38,63 @@ from pathlib import Path
 from mini_reasoning import verifier
 
 GROUPS = ("stepped", "flat", "untouched")
+SPLIT_GROUPS = ("stepped", "flat", "held_out", "untouched")
 EMPTY = {
     "all": "none: there were no problems",
     "stepped": "none: no drawn problem gave a gradient",
     "flat": "none: every drawn problem stepped",
+    "held_out": "none: nothing was reserved",
     "untouched": "none: training drew every problem, so nothing here is "
                  "held out",
 }
+SPLIT_UNTOUCHED = "none: training drew every problem in its pool"
 METRICS = ("eval", "reward")
 PERMUTATIONS = 20000
 SEED = 0
 
 
-def training_groups(problem_ids: Sequence[str],
-                    steps: Sequence[Mapping]) -> dict[str, list[str]]:
+def training_groups(problem_ids: Sequence[str], steps: Sequence[Mapping],
+                    held_out: Sequence[str] | None = None
+                    ) -> dict[str, list[str]]:
     """Which problems training stepped on, skipped as flat, or never drew.
 
-    Steps cycle the subset, so past its length a problem is drawn more
-    than once. It counts as stepped if any of its draws stepped: the
-    group asks whether the weights ever moved on it.
+    Steps cycle the pool, so a problem can be drawn more than once. It
+    counts as stepped if any of its draws stepped: the group asks
+    whether the weights ever moved on it.
 
     Args:
         problem_ids: The subset's unique ids, in order.
-        steps: The training history's per-step reports.
+        steps: The training history's per-draw reports.
+        held_out: The ids a split reserved, or None for a history
+            written before splits existed. Given, the reserved problems
+            form their own group and untouched narrows to pool problems
+            training never drew.
 
     Returns:
-        Each group's ids, in subset order.
+        Each group's ids, in subset order: stepped, flat and untouched,
+        with held_out before untouched when a split was recorded.
+
+    Raises:
+        ValueError: if training drew a problem the split reserved.
     """
     drawn = {s["unique_id"] for s in steps}
     stepped = {s["unique_id"] for s in steps if s["stepped"]}
-    return {
+    groups = {
         "stepped": [i for i in problem_ids if i in stepped],
         "flat": [i for i in problem_ids if i in drawn and i not in stepped],
-        "untouched": [i for i in problem_ids if i not in drawn],
     }
+    if held_out is None:
+        groups["untouched"] = [i for i in problem_ids if i not in drawn]
+        return groups
+    reserved = set(held_out)
+    breached = sorted(reserved & drawn)
+    if breached:
+        raise ValueError(f"training drew reserved problems {breached}, so "
+                         "the held-out split was not held out")
+    groups["held_out"] = [i for i in problem_ids if i in reserved]
+    groups["untouched"] = [i for i in problem_ids
+                           if i not in drawn and i not in reserved]
+    return groups
 
 
 def sample_scores(records: Sequence[Mapping]) -> dict[str, dict[str, float]]:
@@ -138,7 +162,8 @@ def report(baseline: Mapping, validation: Mapping, history: Mapping) -> dict:
     Args:
         baseline: The baseline eval's results, records and all.
         validation: The validation eval's results over the same problems.
-        history: The training history, {"steps": [...]}.
+        history: The training history: {"steps": [...]}, plus
+            "held_out" for a run that reserved a split.
 
     Returns:
         "groups", each group's ids, and "comparisons", keyed by "all"
@@ -148,7 +173,8 @@ def report(baseline: Mapping, validation: Mapping, history: Mapping) -> dict:
         null.
 
     Raises:
-        ValueError: if the two evals graded different problems.
+        ValueError: if the two evals graded different problems, or if
+            training drew a problem the split reserved.
     """
     ids = [r["unique_id"] for r in baseline["records"]]
     if [r["unique_id"] for r in validation["records"]] != ids:
@@ -156,9 +182,9 @@ def report(baseline: Mapping, validation: Mapping, history: Mapping) -> dict:
                          "the same order, or the pairs are not pairs")
     before = sample_scores(baseline["records"])
     after = sample_scores(validation["records"])
-    groups = training_groups(ids, history["steps"])
+    groups = training_groups(ids, history["steps"], history.get("held_out"))
     comparisons = {"all": _compare(before, after, ids)}
-    for name in GROUPS:
+    for name in groups:
         comparisons[name] = _compare(before, after, groups[name])
     return {"groups": groups, "comparisons": comparisons}
 
@@ -167,10 +193,13 @@ def format_table(result: Mapping) -> str:
     """The report as the lines a run ends with."""
     lines = ["per sample, before -> after (change, p)",
              f"{'group':10s} {'n':>3s}  {'eval':34s}  reward"]
-    for name in ("all", *GROUPS):
+    split = "held_out" in result["groups"]
+    for name in ("all", *result["groups"]):
         row = result["comparisons"][name]
         if row["n"] == 0:
-            lines.append(f"{name:10s} {0:3d}  {EMPTY[name]}")
+            message = (SPLIT_UNTOUCHED if split and name == "untouched"
+                       else EMPTY[name])
+            lines.append(f"{name:10s} {0:3d}  {message}")
             continue
         cells = [f"{m['before']:.3f} -> {m['after']:.3f} "
                  f"({m['delta']:+.3f}, p {m['p']:.3f})"

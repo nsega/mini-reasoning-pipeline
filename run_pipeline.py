@@ -17,6 +17,11 @@ again, which is what storing the bundle bought. --reuse-baseline
 extends that bargain to a whole stage: the baseline eval is
 deterministic in its seed, so a run whose training died reproduces the
 records it already wrote, at the same hour they cost the first time.
+
+The held-out split is also the entry point's. The last --held-out
+problems are kept from training and from nothing else, so both evals
+still grade the whole subset, and the split is checked before the model
+loads, since a bad one found after the baseline eval costs an hour.
 """
 import argparse
 import json
@@ -29,6 +34,21 @@ from mini_reasoning import (
 EVAL_FALLBACK = "number"
 
 
+def positive_int(text: str) -> int:
+    """An argparse type for counts that must be at least one.
+
+    Checked at parse time because the stage that would otherwise refuse
+    the value runs after the model load and the hour-long baseline eval.
+
+    Raises:
+        argparse.ArgumentTypeError: if the value is below one.
+    """
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The CLI. --n-samples sets the candidate set every stage sees."""
     parser = argparse.ArgumentParser(
@@ -36,8 +56,18 @@ def build_parser() -> argparse.ArgumentParser:
                     "self-consistency -> GRPO -> before/after eval")
     parser.add_argument("--subset", default="data/math500_subset50.jsonl")
     parser.add_argument("--model", default="Qwen/Qwen3-0.6B-Base")
-    parser.add_argument("--steps", type=int, default=40,
-                        help="GRPO training steps")
+    parser.add_argument("--steps", type=positive_int, default=40,
+                        help="GRPO optimizer updates. A flat group takes "
+                             "no update and retires its problem, so "
+                             "training draws until this many updates, "
+                             "--max-draws, or no live problem is left")
+    parser.add_argument("--max-draws", type=positive_int, default=None,
+                        help="cap on training draws, a runtime backstop; "
+                             "default 3 x --steps")
+    parser.add_argument("--held-out", type=int, default=10,
+                        help="reserve the last N problems of the subset "
+                             "from training; both evals still cover "
+                             "every problem")
     parser.add_argument("--n-samples", type=int, default=7,
                         help="samples per problem: the candidate set both "
                              "self-consistency and the selection scorer see")
@@ -87,6 +117,34 @@ def load_problems(path) -> list[dict]:
 
 
 COMPARED = ("model", "dtype", "seed", "n_samples", "fallback")
+
+
+def split_held_out(problems: list[dict],
+                   n: int) -> tuple[list[dict], list[dict]]:
+    """Reserves the last n problems from training.
+
+    "Last" is stable because the subset's bytes, order included, are
+    pinned by its test. The default of ten reserves exactly the problems
+    the first float32 run never drew, which is what makes that run this
+    one's control: same pool, same held-out set, same eval.
+
+    Args:
+        problems: The subset, in file order.
+        n: How many to reserve; 0 reserves nothing.
+
+    Returns:
+        (pool, held_out): what training may draw, and what it may not.
+
+    Raises:
+        ValueError: if n is negative, or leaves nothing to train on.
+    """
+    if n < 0:
+        raise ValueError(f"--held-out must be >= 0, got {n}")
+    if n >= len(problems):
+        raise ValueError(f"--held-out {n} reserves all {len(problems)} "
+                         "problems, leaving nothing to train on")
+    cut = len(problems) - n
+    return problems[:cut], problems[cut:]
 
 
 def load_baseline(out_dir, problems, expected: dict) -> dict:
@@ -228,6 +286,7 @@ def run(args, *, load_model=_load_model,
         "training", "validation" and "report" when training ran.
     """
     problems = load_problems(args.subset)
+    pool, held_out = split_held_out(problems, args.held_out)
     model, tokenizer = load_model(args.model)
     scorer = build_scorer()
     eval_args = dict(n_samples=args.n_samples, fallback=EVAL_FALLBACK,
@@ -249,9 +308,14 @@ def run(args, *, load_model=_load_model,
     if args.skip_training:
         return results
 
-    history = trainer.train(model, tokenizer, problems, steps=args.steps,
+    # The evals seed problem i with seed + i. Training's stream starts past
+    # the last of those: sharing one would replay the baseline's own
+    # samples, and first-pass retirement would be decided on that draw.
+    history = trainer.train(model, tokenizer, pool, steps=args.steps,
                             rollout=rollout, group_size=args.n_samples,
-                            lr=args.lr)
+                            lr=args.lr, max_draws=args.max_draws,
+                            seed=args.seed + len(problems))
+    history["held_out"] = [p["unique_id"] for p in held_out]
     write_results(args.out_dir, "training", history)
     results["training"] = history
 
@@ -274,9 +338,9 @@ def main():
           f"{results['baseline']['level_reweighted_accuracy']:.3f}")
     print(f"self-consistency vote  {results['vote_accuracy']:.3f}")
     if "validation" in results:
-        stepped = sum(s["stepped"] for s in results["training"]["steps"])
-        print(f"training steps taken   {stepped}"
-              f" of {len(results['training']['steps'])}")
+        training = results["training"]
+        print(f"training updates       {training['updates']} over "
+              f"{training['draws']} draws (stopped: {training['stopped']})")
         print("validation accuracy    "
               f"{results['validation']['accuracy']:.3f}")
         print("level-reweighted       "
