@@ -9,15 +9,25 @@ three roles: **evaluation → reward → validation**.
 
 ## Pipeline
 
-```
-Qwen3-0.6B base
-   → verifier (evaluation role)      · baseline eval on the frozen subset
-   → self-consistency inference      · None-excluded voting
-   → GRPO training (reward role)     · verifier as binary reward, no-KL default
-   → verifier (validation role)      · before/after eval on the SAME subset
+```mermaid
+flowchart LR
+    subset[("50 MATH-500 problems<br/>frozen, seed 42")]
+    verifier{{"one verifier"}}
+    base["baseline eval<br/>all 50, 7 samples each"]
+    vote["self-consistency vote<br/>over the stored samples"]
+    train["GRPO training<br/>problems 1-40 only<br/>flat groups retired"]
+    val["validation eval<br/>all 50, same seeds"]
+    report["report.json<br/>before vs after, by group:<br/>stepped · flat<br/>held_out · untouched"]
+
+    subset --> base --> train --> val --> report
+    base --> vote
+    verifier -. "evaluation role<br/>lenient" .-> base
+    verifier -. "reward role<br/>boxed-only" .-> train
+    verifier -. "validation role<br/>lenient" .-> val
 ```
 
-<!-- TODO: replace with the pipeline diagram (SVG) -->
+The dotted edges are the verifier's three roles. They share one grader
+and one extraction routine, and differ only in extraction strictness.
 
 ## Design rationale
 
