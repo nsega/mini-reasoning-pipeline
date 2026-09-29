@@ -49,6 +49,21 @@ def positive_int(text: str) -> int:
     return value
 
 
+def non_negative_int(text: str) -> int:
+    """An argparse type for counts that may be zero but not negative.
+
+    Checked at parse time, so a bad value fails the same way whatever
+    the other flags say, before anything loads.
+
+    Raises:
+        argparse.ArgumentTypeError: if the value is negative.
+    """
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be at least 0, got {value}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The CLI. --n-samples sets the candidate set every stage sees."""
     parser = argparse.ArgumentParser(
@@ -64,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-draws", type=positive_int, default=None,
                         help="cap on training draws, a runtime backstop; "
                              "default 3 x --steps")
-    parser.add_argument("--held-out", type=int, default=10,
+    parser.add_argument("--held-out", type=non_negative_int, default=10,
                         help="reserve the last N problems of the subset "
                              "from training; both evals still cover "
                              "every problem")
@@ -260,7 +275,7 @@ def _load_model(name: str):
     whose representable step at these weights is an order of magnitude
     wider than Adam's 1e-6 update: the optimizer steps, reports a
     gradient norm, and rounds back to the same weights. float32 is what
-    the trainer's 8.6 GB memory note and the README's timings measured.
+    the README's measured timings and memory figure assume.
     """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -286,7 +301,10 @@ def run(args, *, load_model=_load_model,
         "training", "validation" and "report" when training ran.
     """
     problems = load_problems(args.subset)
-    pool, held_out = split_held_out(problems, args.held_out)
+    # The split only concerns training, so an eval-only run skips it; a
+    # default of ten would otherwise refuse any smaller smoke subset.
+    pool, held_out = split_held_out(
+        problems, 0 if args.skip_training else args.held_out)
     model, tokenizer = load_model(args.model)
     scorer = build_scorer()
     eval_args = dict(n_samples=args.n_samples, fallback=EVAL_FALLBACK,
@@ -311,11 +329,13 @@ def run(args, *, load_model=_load_model,
     # The evals seed problem i with seed + i. Training's stream starts past
     # the last of those: sharing one would replay the baseline's own
     # samples, and first-pass retirement would be decided on that draw.
+    training_seed = args.seed + len(problems)
     history = trainer.train(model, tokenizer, pool, steps=args.steps,
                             rollout=rollout, group_size=args.n_samples,
                             lr=args.lr, max_draws=args.max_draws,
-                            seed=args.seed + len(problems))
+                            seed=training_seed)
     history["held_out"] = [p["unique_id"] for p in held_out]
+    history["seed"] = training_seed
     write_results(args.out_dir, "training", history)
     results["training"] = history
 

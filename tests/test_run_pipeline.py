@@ -330,6 +330,14 @@ class TestCli:
         with pytest.raises(SystemExit):
             build_parser().parse_args(["--steps", "0"])
 
+    def test_a_negative_held_out_is_refused_even_without_training(self):
+        """Found in review of #18: once an eval-only run stopped
+        splitting, its call site stopped checking the sign too, and
+        --held-out -5 ran a full baseline eval without a word."""
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["--skip-training", "--held-out",
+                                       "-5"])
+
 
 class TestHeldOutSplit:
     """The last N problems are reserved; only the rest are trained on."""
@@ -466,3 +474,28 @@ class TestSeedStreams:
             sampler=sampler, rollout=rollout)
         assert train_seeds and eval_seeds
         assert not set(eval_seeds) & set(train_seeds)
+
+
+class TestSkipTrainingIgnoresTheSplit:
+    """Deferred from #16's review: the split only concerns training."""
+
+    def test_an_eval_only_run_accepts_a_subset_the_split_would_empty(
+            self, tmp_path):
+        """--held-out's default of ten would reserve all of a two-problem
+        subset, which refused an eval-only smoke run although nothing
+        trains."""
+        results = run(args_for(tmp_path, **{"--skip-training": True,
+                                            "--held-out": 10}),
+                      load_model=loader, sampler=canned)
+        assert results["baseline"]["accuracy"] == pytest.approx(0.5)
+
+
+class TestTrainingSeedIsRecorded:
+    """The seed stream the fix in #16 chose, readable from the run."""
+
+    def test_the_history_records_the_seed_training_drew_from(self, tmp_path):
+        run(args_for(tmp_path, **{"--steps": 1}), load_model=loader,
+            sampler=canned, rollout=canned_rollout)
+        written = json.loads(
+            (tmp_path / "results" / "training.json").read_text())
+        assert written["seed"] == 42 + 2

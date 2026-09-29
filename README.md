@@ -9,15 +9,25 @@ three roles: **evaluation → reward → validation**.
 
 ## Pipeline
 
-```
-Qwen3-0.6B base
-   → verifier (evaluation role)      · baseline eval on the frozen subset
-   → self-consistency inference      · None-excluded voting
-   → GRPO training (reward role)     · verifier as binary reward, no-KL default
-   → verifier (validation role)      · before/after eval on the SAME subset
+```mermaid
+flowchart LR
+    subset[("50 MATH-500 problems<br/>frozen, seed 42")]
+    verifier{{"one verifier"}}
+    base["baseline eval<br/>all 50, 7 samples each"]
+    vote["self-consistency vote<br/>over the stored samples"]
+    train["GRPO training<br/>problems 1-40 only<br/>flat groups retired"]
+    val["validation eval<br/>all 50, same seeds"]
+    report["report.json<br/>before vs after, by group:<br/>stepped · flat<br/>held_out · untouched"]
+
+    subset --> base --> train --> val --> report
+    base --> vote
+    verifier -. "evaluation role<br/>lenient" .-> base
+    verifier -. "reward role<br/>boxed-only" .-> train
+    verifier -. "validation role<br/>lenient" .-> val
 ```
 
-<!-- TODO: replace with the pipeline diagram (SVG) -->
+The dotted edges are the verifier's three roles. They share one grader
+and one extraction routine, and differ only in extraction strictness.
 
 ## Design rationale
 
@@ -55,6 +65,14 @@ accepted — is in [docs/design-notes.md](docs/design-notes.md), together
 with an audit of the design against every contract this repo committed
 before the interface existed.
 
+The dynamic-sampling change (#16) was designed in
+[docs/specs/](docs/specs/) and planned in [docs/plans/](docs/plans/)
+before its code was written, and each recorded run sits in
+[docs/runs/](docs/runs/) with a note on what produced it. The spec and
+plan are process records, kept as written: where they disagree with
+the code or the design notes, the code and the design notes are the
+record.
+
 ## Reproduction
 
 ```bash
@@ -69,11 +87,12 @@ uv run python -m mini_reasoning.report docs/runs/2026-09-21-float32
 ```
 
 A run that trains ends with `report.json`, the before/after split by
-what training did to each problem: stepped on, drawn but skipped as
-flat, or never drawn. The pipeline trains on the subset it evaluates,
-so one blended number mixes what training touched with the only
-problems it never saw; the split keeps them apart, and scores every
-stored sample rather than one selected answer per problem.
+what training did to each problem: stepped on, drawn but retired as
+flat, reserved as held out, or in the pool but never drawn. The
+pipeline trains on the subset it evaluates, so one blended number
+would mix what training touched with the only problems it never saw;
+the split keeps them apart, and scores every stored sample rather than
+one selected answer per problem.
 
 Training draws only from the first 40 problems: `--held-out 10`, the
 default, reserves the last ten, and both evals still grade all fifty.
@@ -115,8 +134,11 @@ floor rather than a clock. Per-problem cost tracks difficulty, because
 harder problems run longer before they stop: samples average 666
 characters at level 1 against 1187 at level 5, and this subset is
 back-loaded with 36 of its 50 problems at levels 4 and 5. Training
-holds the policy, its gradients and Adam's state at once, which for
-this 0.6B model in float32 peaked at 8.6 GB.
+holds the policy, its gradients and Adam's state at once, about 9 GB
+for this 0.6B model in float32, and the forward and backward pass over
+each rollout comes on top: measured through the first optimizer
+updates, training peaks at about 14 GB. A 16 GB machine will not hold
+a run alongside much else.
 
 A note on what the numbers mean: the validation eval grades with the
 same verifier that produced the training reward, differing only in
@@ -126,8 +148,27 @@ against this grader, not an independent one.
 
 ## Provenance
 
-All pipeline code in `mini_reasoning/` is self-written (lab rule: only
-self-written code migrates). Scaffolding, tests, and data scripts note
-their origin in their headers. The evaluation subset derives from
-MATH-500 (Hendrycks et al.; HuggingFaceH4/MATH-500), seed-fixed and
-frozen.
+This repository was built with AI assistance (Claude). Commit trailers
+alone would mislead in both directions, so the split is set out here.
+
+- **Self-written:** the implementations of the verifier, the selection
+  scorers and self-consistency voting (`verifier.py`, `scorers.py` and
+  `consistency.py` in `mini_reasoning/`). Their signatures and stubs
+  came from the AI-written scaffold commit (`e5ef7fd`), which reserved
+  each body for a self-written implementation; the commits that wrote
+  those bodies carry no AI trailer. The one exception is a single
+  field, `Candidate.finished`, added to `scorers.py` in an AI-assisted
+  commit.
+- **Written with AI assistance:** GRPO, the trainer, the evaluator and
+  the entry point (`grpo.py`, `trainer.py`, `evaluate.py` and
+  `run_pipeline.py`). `report.py` and its tests are AI-written, and
+  their headers say so.
+- **Tests and scaffolding:** every test file began in the AI-written
+  scaffold commit or was extended with AI assistance. The data script
+  is AI-written, and its header says so.
+- **Commit trailers:** commits before #12 mark Claude's assistance with
+  a `Co-Authored-By` trailer. Commits from #12 onward were AI-assisted
+  as well but carry no trailer; this section is their disclosure.
+
+The evaluation subset derives from MATH-500 (Hendrycks et al.;
+HuggingFaceH4/MATH-500), seed-fixed and frozen.

@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the floor pyproject declares; 3.13 is what it is developed on.
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # The suite needs no model and no network: every model-bound step is
+      # injected as a double, so installing uv.lock is the whole setup. No
+      # cache: the lock pulls torch's CUDA wheels on Linux, a 2.4 GiB entry
+      # per Python version, and an uncached run already takes about a minute.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: false
+      - run: uv run --frozen --group dev pytest -q
