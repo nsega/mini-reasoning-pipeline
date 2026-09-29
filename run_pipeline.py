@@ -49,6 +49,21 @@ def positive_int(text: str) -> int:
     return value
 
 
+def non_negative_int(text: str) -> int:
+    """An argparse type for counts that may be zero but not negative.
+
+    Checked at parse time, so a bad value fails the same way whatever
+    the other flags say, before anything loads.
+
+    Raises:
+        argparse.ArgumentTypeError: if the value is negative.
+    """
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be at least 0, got {value}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The CLI. --n-samples sets the candidate set every stage sees."""
     parser = argparse.ArgumentParser(
@@ -64,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-draws", type=positive_int, default=None,
                         help="cap on training draws, a runtime backstop; "
                              "default 3 x --steps")
-    parser.add_argument("--held-out", type=int, default=10,
+    parser.add_argument("--held-out", type=non_negative_int, default=10,
                         help="reserve the last N problems of the subset "
                              "from training; both evals still cover "
                              "every problem")

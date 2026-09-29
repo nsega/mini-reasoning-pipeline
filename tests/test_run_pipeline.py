@@ -330,6 +330,14 @@ class TestCli:
         with pytest.raises(SystemExit):
             build_parser().parse_args(["--steps", "0"])
 
+    def test_a_negative_held_out_is_refused_even_without_training(self):
+        """Found in review of #18: once an eval-only run stopped
+        splitting, its call site stopped checking the sign too, and
+        --held-out -5 ran a full baseline eval without a word."""
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["--skip-training", "--held-out",
+                                       "-5"])
+
 
 class TestHeldOutSplit:
     """The last N problems are reserved; only the rest are trained on."""
