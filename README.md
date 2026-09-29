@@ -65,12 +65,13 @@ accepted — is in [docs/design-notes.md](docs/design-notes.md), together
 with an audit of the design against every contract this repo committed
 before the interface existed.
 
-Later changes were designed in [docs/specs/](docs/specs/) and planned
-in [docs/plans/](docs/plans/) before any code was written, and each
-recorded run sits in [docs/runs/](docs/runs/) with a note on what
-produced it. The specs and plans are process records, kept as written:
-where they disagree with the code or the design notes, the code and
-the design notes are the record.
+The dynamic-sampling change (#16) was designed in
+[docs/specs/](docs/specs/) and planned in [docs/plans/](docs/plans/)
+before its code was written, and each recorded run sits in
+[docs/runs/](docs/runs/) with a note on what produced it. The spec and
+plan are process records, kept as written: where they disagree with
+the code or the design notes, the code and the design notes are the
+record.
 
 ## Reproduction
 
@@ -150,11 +151,14 @@ against this grader, not an independent one.
 This repository was built with AI assistance (Claude). Commit trailers
 alone would mislead in both directions, so the split is set out here.
 
-- **Self-written:** the verifier, the selection scorers and
-  self-consistency voting (`verifier.py`, `scorers.py` and
-  `consistency.py` in `mini_reasoning/`). Their implementation commits
-  carry no AI trailer. The one exception is a single field,
-  `Candidate.finished`, added to `scorers.py` in an AI-assisted commit.
+- **Self-written:** the implementations of the verifier, the selection
+  scorers and self-consistency voting (`verifier.py`, `scorers.py` and
+  `consistency.py` in `mini_reasoning/`). Their signatures and stubs
+  came from the AI-written scaffold commit (`e5ef7fd`), which reserved
+  each body for a self-written implementation; the commits that wrote
+  those bodies carry no AI trailer. The one exception is a single
+  field, `Candidate.finished`, added to `scorers.py` in an AI-assisted
+  commit.
 - **Written with AI assistance:** GRPO, the trainer, the evaluator and
   the entry point (`grpo.py`, `trainer.py`, `evaluate.py` and
   `run_pipeline.py`). `report.py` and its tests are AI-written, and
