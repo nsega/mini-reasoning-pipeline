@@ -70,6 +70,11 @@ at p = 0.10, not established. The flat problems are out of reach rather
 than unlucky, since 16 of the 17 also score zero boxed reward in the
 independent baseline draw.
 
+**Later:** the 2026-09-28 run, with 40 updates against this run's 23
+and the same baseline, did not reproduce the stepped gain. On the 17
+stepped problems both runs share, this run moved +0.034 and that one
+-0.034; see [its note](../2026-09-28-dynamic-sampling/).
+
 ## What the numbers do not say
 
 **The reward curve is confounded by problem order.** Mean reward falls
