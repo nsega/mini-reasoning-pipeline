@@ -115,8 +115,11 @@ floor rather than a clock. Per-problem cost tracks difficulty, because
 harder problems run longer before they stop: samples average 666
 characters at level 1 against 1187 at level 5, and this subset is
 back-loaded with 36 of its 50 problems at levels 4 and 5. Training
-holds the policy, its gradients and Adam's state at once, which for
-this 0.6B model in float32 peaked at 8.6 GB.
+holds the policy, its gradients and Adam's state at once, about 9 GB
+for this 0.6B model in float32, and the forward and backward pass over
+each rollout comes on top: measured through the first optimizer
+updates, training peaks at about 14 GB. A 16 GB machine will not hold
+a run alongside much else.
 
 A note on what the numbers mean: the validation eval grades with the
 same verifier that produced the training reward, differing only in

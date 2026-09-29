@@ -313,7 +313,7 @@ The per-rollout scalar handed to `grpo_loss` is the mean logprob over that rollo
 The sum of token logprobs, which is the sequence logprob in the literal sense. It makes a rollout's gradient scale with its length, so a 400-token rollout outweighs a 40-token one before the advantages are applied, and length is not what the reward is measuring.
 One batched backward over the group. Six live graphs OOM'd 18.7GB on MPS in the lab, which is what per-rollout accumulation exists to avoid; without the 1/G scaling it would also be a different step, G times larger, as [What grpo_loss reduces over](#what-grpo_loss-reduces-over) records.
 Generating under `inference_mode`. Its tensors cannot re-enter autograd, and these sequences are rescored with gradients immediately after.
-A KL penalty against a reference policy. The signed-logratio form is the sole gradient on a zero-advantage step and collapsed the policy in 40 steps at this scale, and holding a frozen reference model would double the memory of a run already peaking at 8.6 GB.
+A KL penalty against a reference policy. The signed-logratio form is the sole gradient on a zero-advantage step and collapsed the policy in 40 steps at this scale, and holding a frozen reference model would add its 2.2 GB of float32 weights to a run already peaking at about 14 GB.
 
 **Evidence.**
 (1) The clip is load-bearing rather than defensive: a real step measured a pre-clip norm of 644 against a bound of 1.0, which is the order the lab recorded.

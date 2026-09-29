@@ -260,7 +260,7 @@ def _load_model(name: str):
     whose representable step at these weights is an order of magnitude
     wider than Adam's 1e-6 update: the optimizer steps, reports a
     gradient norm, and rounds back to the same weights. float32 is what
-    the trainer's 8.6 GB memory note and the README's timings measured.
+    the README's measured timings and memory figure assume.
     """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer

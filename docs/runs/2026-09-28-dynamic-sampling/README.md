@@ -95,3 +95,7 @@ per-rollout mean, not independently of it.
 - One seed. Every p here is within a single run's sampling noise.
 - Peak memory was not measured, so the README's 8.6 GB figure is
   still the pre-split measurement.
+
+**Later:** measured on 2026-09-29 through the first optimizer updates
+of a short run, training peaks at about 14 GB, not 8.6. The README
+now says so.
