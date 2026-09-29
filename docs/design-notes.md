@@ -31,7 +31,7 @@ that CAN see the ground truth can silently cheat at eval time and at real infere
 
 **Cost accepted.**
 Two swap points instead of one: Selection strategies swap in scorers.py, but reward strictness (boxed-only) swap at the trainer harness - the training loop calls the verifier with fallback= None: grpo.py itself never sees text or extraction.
-The README's phrase "Scorer/reward is a swappable interface" overstates this, and I will fix it when the design lands.
+The README's phrase "Scorer/reward is a swappable interface" overstated this. It now reads "Selection is a swappable interface".
 
 **Pinned by.**
 test_scorers_share_one_call_contract, every scorer is callable with samples alone. The call signature has no ground-truth parameter.
@@ -438,4 +438,4 @@ The signature places the model asymmetry at the caller, so on the eval path `eva
 Landed as three keyword-only additions to the committed positional signature, `n_samples`, `fallback` and `sampler`; the bundle is built by the sampler and stored in the record. See [The sampler seam](#the-sampler-seam).
 
 **Not in this table.**
-The README's phrase "Scorer/reward is a swappable interface" overstates the design, since reward strictness swaps at the trainer harness rather than in `scorers.py`. That is prose rather than a committed contract, and it is corrected when the design lands.
+The README's phrase "Scorer/reward is a swappable interface" overstates the design, since reward strictness swaps at the trainer harness rather than in `scorers.py`. That was prose rather than a committed contract, and the README has since been corrected to "Selection is a swappable interface".

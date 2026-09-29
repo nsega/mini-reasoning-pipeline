@@ -55,6 +55,13 @@ accepted — is in [docs/design-notes.md](docs/design-notes.md), together
 with an audit of the design against every contract this repo committed
 before the interface existed.
 
+Later changes were designed in [docs/specs/](docs/specs/) and planned
+in [docs/plans/](docs/plans/) before any code was written, and each
+recorded run sits in [docs/runs/](docs/runs/) with a note on what
+produced it. The specs and plans are process records, kept as written:
+where they disagree with the code or the design notes, the code and
+the design notes are the record.
+
 ## Reproduction
 
 ```bash
@@ -69,11 +76,12 @@ uv run python -m mini_reasoning.report docs/runs/2026-09-21-float32
 ```
 
 A run that trains ends with `report.json`, the before/after split by
-what training did to each problem: stepped on, drawn but skipped as
-flat, or never drawn. The pipeline trains on the subset it evaluates,
-so one blended number mixes what training touched with the only
-problems it never saw; the split keeps them apart, and scores every
-stored sample rather than one selected answer per problem.
+what training did to each problem: stepped on, drawn but retired as
+flat, reserved as held out, or in the pool but never drawn. The
+pipeline trains on the subset it evaluates, so one blended number
+would mix what training touched with the only problems it never saw;
+the split keeps them apart, and scores every stored sample rather than
+one selected answer per problem.
 
 Training draws only from the first 40 problems: `--held-out 10`, the
 default, reserves the last ten, and both evals still grade all fifty.
