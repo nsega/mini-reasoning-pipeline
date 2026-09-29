@@ -103,15 +103,13 @@ the group is not a second lockfile.
 Expect roughly 70 seconds per problem for an eval at the default seven
 samples and 512-token cap, so about an hour for the 50-problem subset
 on CPU. A full run pays that twice, for the baseline and the
-validation eval, and the training in between adds 40 steps of seven
-rollouts each, plus a backward pass per rollout, since the trainer
-runs them one at a time. Budget nearer three times a single eval, not
-twice. Measured end to end on an M4 Pro at float32: 57 minutes for the
-baseline eval, 44 for the 40 GRPO steps, 54 for the validation eval,
-two and a half hours in all. Those were measured before dynamic
-sampling, when training stopped at 40 draws; it now runs to 40
-optimizer updates, so the training stage takes longer, and the next
-measured run replaces these figures. The same work at the same seed
+validation eval, and the training in between draws problems until it
+has taken 40 updates, each draw seven rollouts, plus a backward pass
+per rollout on every draw that steps, since the trainer runs them one
+at a time. Budget nearer three times a single eval, not twice.
+Measured end to end on an M4 Pro at float32: 60 minutes for the
+baseline eval, 69 for training's 40 updates over 64 draws, 51 for the
+validation eval, three hours in all. The same work at the same seed
 has varied by 25 minutes between runs on this machine, so these are a
 floor rather than a clock. Per-problem cost tracks difficulty, because
 harder problems run longer before they stop: samples average 666
