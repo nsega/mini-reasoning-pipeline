@@ -79,22 +79,20 @@ def training_groups(problem_ids: Sequence[str], steps: Sequence[Mapping],
     """
     drawn = {s["unique_id"] for s in steps}
     stepped = {s["unique_id"] for s in steps if s["stepped"]}
-    groups = {
-        "stepped": [i for i in problem_ids if i in stepped],
-        "flat": [i for i in problem_ids if i in drawn and i not in stepped],
-    }
-    if held_out is None:
-        groups["untouched"] = [i for i in problem_ids if i not in drawn]
-        return groups
-    reserved = set(held_out)
+    reserved = set(held_out or ())
     breached = sorted(reserved & drawn)
     if breached:
         raise ValueError(f"training drew reserved problems {breached}, so "
                          "the held-out split was not held out")
-    groups["held_out"] = [i for i in problem_ids if i in reserved]
-    groups["untouched"] = [i for i in problem_ids
-                           if i not in drawn and i not in reserved]
-    return groups
+    groups = {
+        "stepped": [i for i in problem_ids if i in stepped],
+        "flat": [i for i in problem_ids if i in drawn and i not in stepped],
+        "held_out": [i for i in problem_ids if i in reserved],
+        "untouched": [i for i in problem_ids
+                      if i not in drawn and i not in reserved],
+    }
+    order = GROUPS if held_out is None else SPLIT_GROUPS
+    return {name: groups[name] for name in order}
 
 
 def sample_scores(records: Sequence[Mapping]) -> dict[str, dict[str, float]]:
