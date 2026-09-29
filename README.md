@@ -129,8 +129,24 @@ against this grader, not an independent one.
 
 ## Provenance
 
-All pipeline code in `mini_reasoning/` is self-written (lab rule: only
-self-written code migrates). Scaffolding, tests, and data scripts note
-their origin in their headers. The evaluation subset derives from
-MATH-500 (Hendrycks et al.; HuggingFaceH4/MATH-500), seed-fixed and
-frozen.
+This repository was built with AI assistance (Claude). Commit trailers
+alone would mislead in both directions, so the split is set out here.
+
+- **Self-written:** the verifier, the selection scorers and
+  self-consistency voting (`verifier.py`, `scorers.py` and
+  `consistency.py` in `mini_reasoning/`). Their implementation commits
+  carry no AI trailer. The one exception is a single field,
+  `Candidate.finished`, added to `scorers.py` in an AI-assisted commit.
+- **Written with AI assistance:** GRPO, the trainer, the evaluator and
+  the entry point (`grpo.py`, `trainer.py`, `evaluate.py` and
+  `run_pipeline.py`). `report.py` and its tests are AI-written, and
+  their headers say so.
+- **Tests and scaffolding:** every test file began in the AI-written
+  scaffold commit or was extended with AI assistance. The data script
+  is AI-written, and its header says so.
+- **Commit trailers:** commits before #12 mark Claude's assistance with
+  a `Co-Authored-By` trailer. Commits from #12 onward were AI-assisted
+  as well but carry no trailer; this section is their disclosure.
+
+The evaluation subset derives from MATH-500 (Hendrycks et al.;
+HuggingFaceH4/MATH-500), seed-fixed and frozen.

@@ -28,6 +28,9 @@ problems rose, untouched ones fell, and the blend read as a decline.
 Everything here is a pure function of stored material, so any run on
 disk can be reported without a model: python -m mini_reasoning.report
 <run-dir>.
+
+Written with Claude (AI-written, reviewed by the author); see the
+README's Provenance section.
 """
 import argparse
 import json

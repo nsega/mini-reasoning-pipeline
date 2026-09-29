@@ -6,6 +6,9 @@ the ones it never drew. It also counted one selected answer per problem
 where seven samples were stored. What is pinned here is the split, the
 two per-sample graders and where they disagree, and that the report
 can be rebuilt offline from a stored run.
+
+Written with Claude (AI-written, reviewed by the author); see the
+README's Provenance section.
 """
 import json
 from pathlib import Path
