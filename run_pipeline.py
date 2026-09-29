@@ -314,11 +314,13 @@ def run(args, *, load_model=_load_model,
     # The evals seed problem i with seed + i. Training's stream starts past
     # the last of those: sharing one would replay the baseline's own
     # samples, and first-pass retirement would be decided on that draw.
+    training_seed = args.seed + len(problems)
     history = trainer.train(model, tokenizer, pool, steps=args.steps,
                             rollout=rollout, group_size=args.n_samples,
                             lr=args.lr, max_draws=args.max_draws,
-                            seed=args.seed + len(problems))
+                            seed=training_seed)
     history["held_out"] = [p["unique_id"] for p in held_out]
+    history["seed"] = training_seed
     write_results(args.out_dir, "training", history)
     results["training"] = history
 

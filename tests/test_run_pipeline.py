@@ -481,3 +481,13 @@ class TestSkipTrainingIgnoresTheSplit:
                       load_model=loader, sampler=canned)
         assert results["baseline"]["accuracy"] == pytest.approx(0.5)
 
+
+class TestTrainingSeedIsRecorded:
+    """The seed stream the fix in #16 chose, readable from the run."""
+
+    def test_the_history_records_the_seed_training_drew_from(self, tmp_path):
+        run(args_for(tmp_path, **{"--steps": 1}), load_model=loader,
+            sampler=canned, rollout=canned_rollout)
+        written = json.loads(
+            (tmp_path / "results" / "training.json").read_text())
+        assert written["seed"] == 42 + 2
