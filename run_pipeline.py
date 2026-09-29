@@ -286,7 +286,10 @@ def run(args, *, load_model=_load_model,
         "training", "validation" and "report" when training ran.
     """
     problems = load_problems(args.subset)
-    pool, held_out = split_held_out(problems, args.held_out)
+    # The split only concerns training, so an eval-only run skips it; a
+    # default of ten would otherwise refuse any smaller smoke subset.
+    pool, held_out = split_held_out(
+        problems, 0 if args.skip_training else args.held_out)
     model, tokenizer = load_model(args.model)
     scorer = build_scorer()
     eval_args = dict(n_samples=args.n_samples, fallback=EVAL_FALLBACK,

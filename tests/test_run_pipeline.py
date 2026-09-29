@@ -466,3 +466,18 @@ class TestSeedStreams:
             sampler=sampler, rollout=rollout)
         assert train_seeds and eval_seeds
         assert not set(eval_seeds) & set(train_seeds)
+
+
+class TestSkipTrainingIgnoresTheSplit:
+    """Deferred from #16's review: the split only concerns training."""
+
+    def test_an_eval_only_run_accepts_a_subset_the_split_would_empty(
+            self, tmp_path):
+        """--held-out's default of ten would reserve all of a two-problem
+        subset, which refused an eval-only smoke run although nothing
+        trains."""
+        results = run(args_for(tmp_path, **{"--skip-training": True,
+                                            "--held-out": 10}),
+                      load_model=loader, sampler=canned)
+        assert results["baseline"]["accuracy"] == pytest.approx(0.5)
+
