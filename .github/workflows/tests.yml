@@ -14,8 +14,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.12 is the floor pyproject declares; 3.13 is what it is developed on.
-        python-version: ["3.12", "3.13"]
+        # 3.12 is the floor pyproject declares; 3.13 is what it is developed
+        # on; 3.14 is what uv resolves for a fresh clone where it is installed.
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

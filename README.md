@@ -3,9 +3,11 @@
 A minimal reasoning pipeline for Qwen3-0.6B where one verifier plays
 three roles: **evaluation → reward → validation**.
 
-> Status: private development. Goes public when the done-criteria hold:
-> one-command end-to-end run, pipeline diagram, design rationale, and
-> reproduction steps, all in this README.
+> Status: the done-criteria hold. The one-command end-to-end run
+> reproduces its recorded results record for record from a fresh clone
+> ([evidence](docs/runs/2026-09-28-dynamic-sampling/README.md#reproduced)),
+> and the pipeline diagram, design rationale and reproduction steps are
+> all in this README.
 
 ## Pipeline
 
