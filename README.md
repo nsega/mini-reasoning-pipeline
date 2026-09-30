@@ -176,3 +176,8 @@ alone would mislead in both directions, so the split is set out here.
 
 The evaluation subset derives from MATH-500 (Hendrycks et al.;
 HuggingFaceH4/MATH-500), seed-fixed and frozen.
+
+## License
+
+Copyright 2026 Naoki Sega. Licensed under the Apache License, Version
+2.0; see [LICENSE](LICENSE).
