@@ -90,6 +90,18 @@ learning rate is the prime suspect for any follow-up. The design
 notes record that 1e-6 was chosen against the 1/T scaling of the
 per-rollout mean, not independently of it.
 
+## Reproduced
+
+On 2026-09-29 a fresh clone of `main` at `0423849`, following only the
+README's one command, reproduced this run record for record: the
+baseline and validation records and their provenance identical, all 64
+training draws identical down to the gradient norms, and `report.json`
+byte-identical. It ran on Python 3.14.7 where this run used 3.13.1,
+with the same torch 2.13.0 and transformers 5.15.0, in 2h52m. The one
+new field, the training seed that #18 records, reads 92, as the
+provenance table above says. The machine's model and package caches
+were shared, so a first-time download was not part of the test.
+
 ## Known gaps
 
 - One seed. Every p here is within a single run's sampling noise.
