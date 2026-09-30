@@ -91,7 +91,7 @@ Raising from inside the composite: a scorer that raises cannot be composed with 
 
 **Evidence.**
 (1) The signature fixed the positional contract — same length in, same length out — so removal is not available to a stage.
-(2) `-inf` is absorbing under the sum, which makes the veto a property of the combination rule rather than of stage behaviour.
+(2) `-inf` is absorbing by the composite's combination rule, not by arithmetic, since `-inf + inf` is `nan`; that makes the veto a property of the combination rule rather than of stage behaviour.
 (3) The lab's verdict is an ordered composition (gate, then rank, then vote agreement), so the gate's outcome must survive two later stages to mean anything.
 (4) The group-size hazard that made masking necessary on the reward path no longer applies here, because GRPO is not a consumer of this protocol ([One interface or two](#one-interface-or-two)), so the reason for masking is now the positional contract alone.
 
