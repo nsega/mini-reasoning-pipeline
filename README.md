@@ -52,10 +52,12 @@ Model (From Scratch)*:
   model double to test. Purity is also what makes a composite re-runnable
   offline over stored records, which is why the interface carries no
   reporting method of its own.
-- **The veto is structural, not behavioural**: a gate rejects by scoring
-  `-inf`, an absorbing element under the sum, so no later stage can lift a
-  rejected candidate however it is written. Chosen over dropping, which
-  would break the positional alignment the caller relies on.
+- **The veto is structural, not behavioural**: a gate rejects by
+  scoring `-inf`, which the composite's combination rule treats as
+  absorbing (arithmetic alone would not, since `-inf + inf` is `nan`),
+  so no later stage can lift a rejected candidate however it is
+  written. Chosen over dropping, which would break the positional
+  alignment the caller relies on.
 - **One verifier, three roles, one difference**: evaluation, reward and
   validation share the same grader and extraction machinery; only
   extraction strictness differs. Reward is boxed-only, and boxed-only is
