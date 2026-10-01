@@ -159,10 +159,12 @@ alone would mislead in both directions, so the split is set out here.
   scorers and self-consistency voting (`verifier.py`, `scorers.py` and
   `consistency.py` in `mini_reasoning/`). Their signatures and stubs
   came from the AI-written scaffold commit (`e5ef7fd`), which reserved
-  each body for a self-written implementation; the commits that wrote
-  those bodies carry no AI trailer. The one exception is a single
-  field, `Candidate.finished`, added to `scorers.py` in an AI-assisted
-  commit.
+  each body for a self-written implementation. Two exceptions: a
+  single field, `Candidate.finished`, added to `scorers.py` in an
+  AI-assisted commit; and `_normalize_text` in `verifier.py`, which
+  Claude wrote during pairing in the study lab. Its own comment asks
+  for a rewrite by hand before migrating to this repository; it was
+  ported unchanged instead.
 - **Written with AI assistance:** GRPO, the trainer, the evaluator and
   the entry point (`grpo.py`, `trainer.py`, `evaluate.py` and
   `run_pipeline.py`). `report.py` and its tests are AI-written, and
@@ -170,9 +172,11 @@ alone would mislead in both directions, so the split is set out here.
 - **Tests and scaffolding:** every test file began in the AI-written
   scaffold commit or was extended with AI assistance. The data script
   is AI-written, and its header says so.
-- **Commit trailers:** commits before #12 mark Claude's assistance with
-  a `Co-Authored-By` trailer. Commits from #12 onward were AI-assisted
-  as well but carry no trailer; this section is their disclosure.
+- **Commit trailers:** commits before #12 carry a `Co-Authored-By`
+  trailer where Claude assisted, with one exception: `e28f9f0`, which
+  brought in the ported `_normalize_text`, has none. Commits from #12
+  onward were AI-assisted as well but carry no trailer; this section
+  is their disclosure.
 
 The evaluation subset derives from MATH-500 (Hendrycks et al.;
 HuggingFaceH4/MATH-500), seed-fixed and frozen.
