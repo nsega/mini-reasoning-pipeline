@@ -177,8 +177,8 @@ def _normalize_text(text: str | None) -> str:
         The normalized answer, or the empty string for empty input.
     """
     # Minimal subset of the official normalize_text (Claude-written during
-    # pairing): only what the current tests need. Rewrite before migrating
-    # to the capstone.
+    # pairing in the study lab): only what the current tests need. Ported
+    # unchanged rather than rewritten; see Provenance in the README.
     if not text:
         return ""
     text = text.strip().strip("$ ")

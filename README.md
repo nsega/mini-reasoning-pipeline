@@ -162,9 +162,9 @@ alone would mislead in both directions, so the split is set out here.
   each body for a self-written implementation. Two exceptions: a
   single field, `Candidate.finished`, added to `scorers.py` in an
   AI-assisted commit; and `_normalize_text` in `verifier.py`, which
-  Claude wrote during pairing in the study lab. Its own comment asks
-  for a rewrite by hand before migrating to this repository; it was
-  ported unchanged instead.
+  Claude wrote during pairing in the study lab. The lab's own note
+  required a rewrite by hand before migrating it to this repository;
+  it was ported unchanged instead, as its comment now says.
 - **Written with AI assistance:** GRPO, the trainer, the evaluator and
   the entry point (`grpo.py`, `trainer.py`, `evaluate.py` and
   `run_pipeline.py`). `report.py` and its tests are AI-written, and
