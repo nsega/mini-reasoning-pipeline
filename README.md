@@ -63,6 +63,14 @@ Model (From Scratch)*:
   extraction strictness differs. Reward is boxed-only, and boxed-only is
   the default, so a forgotten argument fails toward strictness rather than
   away from it.
+- **Sampling temperature is 0.7, a cautious choice rather than a
+  measured optimum**: the lab's Experiment B, under a different
+  prompt, top-p and token cap, found that 1.3 significantly raised
+  failed extractions, the extra entropy going into wandering rather
+  than distinct answers, and that 1.0 led 0.7 only directionally. The
+  pipeline keeps 0.7 because its reward is boxed-only and, on its own
+  prompt, 1.0 boxed fewer answers, though that probe covered one
+  problem, three samples and 48 tokens.
 
 The full record — every rejected option, its evidence, and the cost
 accepted — is in [docs/design-notes.md](docs/design-notes.md), together
@@ -162,9 +170,9 @@ alone would mislead in both directions, so the split is set out here.
   each body for a self-written implementation. Two exceptions: a
   single field, `Candidate.finished`, added to `scorers.py` in an
   AI-assisted commit; and `_normalize_text` in `verifier.py`, which
-  Claude wrote during pairing in the study lab. Its own comment asks
-  for a rewrite by hand before migrating to this repository; it was
-  ported unchanged instead.
+  Claude wrote during pairing in the study lab. The lab's own note
+  required a rewrite by hand before migrating it to this repository;
+  it was ported unchanged instead, as its comment now says.
 - **Written with AI assistance:** GRPO, the trainer, the evaluator and
   the entry point (`grpo.py`, `trainer.py`, `evaluate.py` and
   `run_pipeline.py`). `report.py` and its tests are AI-written, and
