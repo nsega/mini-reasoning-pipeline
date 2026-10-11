@@ -708,6 +708,16 @@ class TestStages:
             (Path(args.out_dir) / "validation.json").read_text())
         assert written["provenance"]["model"] == args.model
 
+    def test_the_baseline_stage_ignores_the_checkpoint(self, tmp_path):
+        """Found in review. The baseline stage drops the held-out split,
+        so its pool never matches the train stage's, and a re-run of it
+        after training began was refused as another run's. It uses no
+        checkpoint, so it checks none."""
+        flags = {"--steps": 2, "--held-out": 1}
+        for stage in ("baseline", "train", "baseline"):
+            run(stage_args(tmp_path, stage, **flags), load_model=loader,
+                sampler=canned, rollout=canned_rollout)
+
     def test_the_train_stage_on_a_finished_checkpoint_draws_nothing(
             self, tmp_path):
         self.staged(tmp_path)

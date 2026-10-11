@@ -486,8 +486,11 @@ def run(args, *, load_model=_load_model,
     # samples, and first-pass retirement would be decided on that draw.
     training_seed = args.seed + len(problems)
     identity = run_identity(args, pool, training_seed)
+    # The baseline stage uses no checkpoint, and its unsplit pool could
+    # never match one the train stage wrote, so it reads none.
     saved = (checkpoint.read_latest(args.checkpoint_dir, identity)
-             if args.checkpoint_dir is not None else None)
+             if args.checkpoint_dir is not None and args.stage != "baseline"
+             else None)
     if args.stage == "validate":
         check_validate_inputs(args.out_dir, saved)
 
