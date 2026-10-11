@@ -499,3 +499,272 @@ class TestTrainingSeedIsRecorded:
         written = json.loads(
             (tmp_path / "results" / "training.json").read_text())
         assert written["seed"] == 42 + 2
+
+
+RECORDS = ("baseline", "training", "validation", "report")
+
+
+class Killed(Exception):
+    """Stands in for SIGKILL: the process ends wherever it was."""
+
+
+def killed_after(draws):
+    """canned_rollout that dies on its call after `draws` draws, once."""
+    calls = []
+
+    def rollout(model, tokenizer, problem, n):
+        if len(calls) == draws:
+            calls.append("killed")
+            raise Killed
+        calls.append(problem)
+        return canned_rollout(model, tokenizer, problem, n)
+    return rollout
+
+
+def run_dir(tmp_path, name, **overrides):
+    """args_for, in its own directory, with a checkpoint directory."""
+    root = tmp_path / name
+    root.mkdir()
+    return args_for(root, **{"--checkpoint-dir": str(root / "ckpt"),
+                             **overrides})
+
+
+def records(args):
+    return {name: (Path(args.out_dir) / f"{name}.json").read_bytes()
+            for name in RECORDS}
+
+
+class TestCheckpointFlags:
+    """Checkpointing is opt-in, and a combination that cannot run fails
+    at parse time, before the model loads."""
+
+    def test_defaults_leave_checkpointing_off(self):
+        args = build_parser().parse_args([])
+        assert args.checkpoint_dir is None and args.stage == "all"
+        assert args.checkpoint_every == 5
+
+    def test_skip_training_is_the_baseline_stage(self):
+        assert build_parser().parse_args(
+            ["--skip-training"]).stage == "baseline"
+
+    @pytest.mark.parametrize("argv", [
+        ["--checkpoint-every", "3"],
+        ["--stage", "train"],
+        ["--stage", "validate"],
+        ["--skip-training", "--stage", "train", "--checkpoint-dir", "c"],
+        ["--checkpoint-dir", "c", "--checkpoint-every", "0"],
+    ])
+    def test_a_combination_that_cannot_run_is_refused(self, argv):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(argv)
+
+
+class TestResumeAfterAKill:
+    """The same command, started again, ends where an unbroken run does."""
+
+    def test_a_killed_run_resumes_to_the_same_records(self, tmp_path):
+        steady = run_dir(tmp_path, "steady", **{"--steps": 4,
+                                                "--checkpoint-every": 2})
+        run(steady, load_model=loader, sampler=canned, rollout=canned_rollout)
+
+        broken = run_dir(tmp_path, "broken", **{"--steps": 4,
+                                                "--checkpoint-every": 2})
+        # p2 is flat under canned_rollout, so the save at update 2 comes
+        # after draw 3. Dying on the fifth call loses the finished draw 4,
+        # which the resume has to replay.
+        rollout = killed_after(4)
+        with pytest.raises(Killed):
+            run(broken, load_model=loader, sampler=canned, rollout=rollout)
+        run(broken, load_model=loader, sampler=canned, rollout=rollout)
+        assert records(broken) == records(steady)
+
+    def test_the_resume_says_what_the_kill_cost(self, tmp_path, capsys):
+        broken = run_dir(tmp_path, "broken", **{"--steps": 4,
+                                                "--checkpoint-every": 2})
+        rollout = killed_after(4)
+        with pytest.raises(Killed):
+            run(broken, load_model=loader, sampler=canned, rollout=rollout)
+        run(broken, load_model=loader, sampler=canned, rollout=rollout)
+        assert ("resuming at draw 3, update 2 (lost 1 draw, 1 update)"
+                in capsys.readouterr().out)
+
+    def test_a_resumed_full_run_reuses_the_stored_baseline(self, tmp_path):
+        """A kill before the first save must not cost the baseline's
+        hour again: the eval is deterministic, so the stored one is it."""
+        args = run_dir(tmp_path, "run", **{"--steps": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(0))
+        calls = []
+
+        def counting(model, tokenizer, problem, n):
+            calls.append(problem)
+            return canned(model, tokenizer, problem, n)
+
+        run(args, load_model=loader, sampler=counting,
+            rollout=canned_rollout)
+        assert len(calls) == 2  # the validation eval alone
+
+    def test_a_resume_at_another_cadence_writes_the_same_records(
+            self, tmp_path):
+        """A save changes nothing it saves, so the cadence is not part of
+        a run's identity and may change between attempts."""
+        steady = run_dir(tmp_path, "steady", **{"--steps": 4})
+        run(steady, load_model=loader, sampler=canned, rollout=canned_rollout)
+        broken = run_dir(tmp_path, "broken", **{"--steps": 4,
+                                                "--checkpoint-every": 2})
+        rollout = killed_after(4)
+        with pytest.raises(Killed):
+            run(broken, load_model=loader, sampler=canned, rollout=rollout)
+        broken.checkpoint_every = 1
+        run(broken, load_model=loader, sampler=canned, rollout=rollout)
+        assert records(broken) == records(steady)
+
+    def test_a_stored_baseline_from_another_dtype_is_refused(self, tmp_path):
+        """Automatic reuse applies --reuse-baseline's checks, so a stale
+        before half is refused, not silently reused."""
+        args = run_dir(tmp_path, "run", **{"--steps": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(0))
+        stored = Path(args.out_dir) / "baseline.json"
+        written = json.loads(stored.read_text())
+        written["provenance"]["dtype"] = "torch.bfloat16"
+        stored.write_text(json.dumps(written))
+        with pytest.raises(ValueError, match="dtype"):
+            run(args, load_model=loader, sampler=canned,
+                rollout=canned_rollout)
+
+    def test_a_finished_full_run_started_again_draws_nothing(self, tmp_path):
+        """A requeue after the end, say of a pod that finished as it was
+        evicted, must not train again or change a record."""
+        args = run_dir(tmp_path, "run", **{"--steps": 3})
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        before = records(args)
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("a finished run drew again")
+
+        run(args, load_model=loader, sampler=canned, rollout=forbidden)
+        assert records(args) == before
+
+    def test_a_checkpoint_from_another_run_is_refused_before_loading(
+            self, tmp_path):
+        args = run_dir(tmp_path, "run", **{"--steps": 4,
+                                           "--checkpoint-every": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(3))
+        args.lr = 1e-5
+
+        def never(name):
+            raise AssertionError("the model loaded before the checkpoint "
+                                 "was checked")
+
+        with pytest.raises(ValueError, match="lr"):
+            run(args, load_model=never, sampler=canned,
+                rollout=canned_rollout)
+
+
+def stage_args(tmp_path, stage, **overrides):
+    """One stage of a three-stage run, all sharing one directory."""
+    root = tmp_path / "staged"
+    root.mkdir(exist_ok=True)
+    return args_for(root, **{"--checkpoint-dir": str(root / "ckpt"),
+                             "--stage": stage, **overrides})
+
+
+def named_loader(name):
+    """loader, with the config a pretrained model carries its name in."""
+    model, tokenizer = loader(name)
+    model.config = type("Config", (), {"name_or_path": name})()
+    return model, tokenizer
+
+
+class TestStages:
+    """Three processes, handing over through the out and checkpoint
+    directories, write what one process writes."""
+
+    def staged(self, tmp_path, load_model=loader):
+        for stage in ("baseline", "train", "validate"):
+            run(stage_args(tmp_path, stage, **{"--steps": 3}),
+                load_model=load_model, sampler=canned,
+                rollout=canned_rollout)
+        return stage_args(tmp_path, "validate", **{"--steps": 3})
+
+    def test_three_stages_write_what_one_run_writes(self, tmp_path):
+        whole = tmp_path / "whole"
+        whole.mkdir()
+        one = args_for(whole, **{"--steps": 3})
+        run(one, load_model=loader, sampler=canned, rollout=canned_rollout)
+        assert records(self.staged(tmp_path)) == records(one)
+
+    def test_the_handoff_keeps_the_base_models_name_in_provenance(
+            self, tmp_path):
+        """Loading the trained weights from a path would stamp the path,
+        and the records would differ from a clean run's."""
+        args = self.staged(tmp_path, load_model=named_loader)
+        written = json.loads(
+            (Path(args.out_dir) / "validation.json").read_text())
+        assert written["provenance"]["model"] == args.model
+
+    def test_the_train_stage_on_a_finished_checkpoint_draws_nothing(
+            self, tmp_path):
+        self.staged(tmp_path)
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("a finished run drew again")
+
+        results = run(stage_args(tmp_path, "train", **{"--steps": 3}),
+                      load_model=loader, sampler=canned, rollout=forbidden)
+        assert results["training"]["updates"] == 3
+
+
+def never_loads(name):
+    raise AssertionError("the model loaded before validate's inputs were "
+                         "checked")
+
+
+class TestValidateRefusals:
+    """--stage validate checks its inputs before the model loads."""
+
+    def test_no_checkpoint(self, tmp_path):
+        with pytest.raises(ValueError, match="complete checkpoint"):
+            run(stage_args(tmp_path, "validate"), load_model=never_loads,
+                sampler=canned)
+
+    def test_an_unfinished_checkpoint(self, tmp_path):
+        args = stage_args(tmp_path, "train", **{"--steps": 4,
+                                                "--checkpoint-every": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(3))
+        with pytest.raises(ValueError, match="before training ended"):
+            run(stage_args(tmp_path, "validate", **{"--steps": 4}),
+                load_model=never_loads, sampler=canned)
+
+    def test_a_missing_training_record(self, tmp_path):
+        TestStages().staged(tmp_path)
+        (tmp_path / "staged" / "results" / "training.json").unlink()
+        with pytest.raises(FileNotFoundError, match="training.json"):
+            run(stage_args(tmp_path, "validate", **{"--steps": 3}),
+                load_model=never_loads, sampler=canned)
+
+    def test_another_split_than_the_train_stage_is_refused(self, tmp_path):
+        """Each stage is given the run's flags again, and one given
+        differently would validate another run's weights."""
+        TestStages().staged(tmp_path)
+        with pytest.raises(ValueError, match="pool"):
+            run(stage_args(tmp_path, "validate",
+                           **{"--steps": 3, "--held-out": 1}),
+                load_model=never_loads, sampler=canned)
+
+    def test_a_training_record_from_another_run(self, tmp_path):
+        TestStages().staged(tmp_path)
+        path = tmp_path / "staged" / "results" / "training.json"
+        written = json.loads(path.read_text())
+        written["steps"][0]["grad_norm"] += 1.0
+        path.write_text(json.dumps(written))
+        with pytest.raises(ValueError, match="does not match"):
+            run(stage_args(tmp_path, "validate", **{"--steps": 3}),
+                load_model=never_loads, sampler=canned)
