@@ -11,8 +11,9 @@
 > for the sections drafted with Claude while a module was implemented,
 > each from options Claude proposed and Naoki accepted: *The fallback
 > contract* (verifier), the two `grpo.py` sections, and the three
-> `evaluate.py` sections, and the two `trainer.py` sections. The
-> section skeleton was scaffolded; the content is Naoki's.
+> `evaluate.py` sections, the two `trainer.py` sections, and
+> *Checkpoint and resume*. The section skeleton was scaffolded; the
+> content is Naoki's.
 
 ## One interface or two
 
@@ -373,6 +374,31 @@ The entry point knows the eval strictness, so the constant protects the pipeline
 
 **Pinned by.**
 `tests/test_run_pipeline.py`: the subset read and a missing one naming its generator, the scorer's three stages and the fallback at both extracting ones, voting over stored records including a record nothing could be extracted from, `--skip-training` running the baseline and the vote and no validation, training raising, and the records landing under the out directory.
+
+## Checkpoint and resume
+
+**Decision.**
+With `--checkpoint-dir`, training saves its full state every `--checkpoint-every` updates, five by default: the policy's weights, Adam's state, the draw history and the pool position, with a stamp of the run's identity. The same command started again resumes from the latest save, and the resumed run's records must equal an uninterrupted run's byte for byte. `--stage` splits baseline, training and validation into separate processes on the same terms.
+
+**Rejected.**
+Saving the weights alone and restarting Adam. A third of the size, but Adam's moments set the size of every later update, so the first step after a resume differs from the clean run's, and a resume that changes the records is the failure this exists to prevent.
+Replaying from the first draw with no checkpoint. Exact, since every draw is seeded, and free, but an interruption then costs everything training had done.
+Saving the RNG state. Each draw reseeds from the training seed plus its index, so the draw count rebuilds it.
+A `--resume` flag. A requeued Kubernetes pod runs its original command, so a resume that needs different arguments never happens. A checkpoint is found, checked against the run, and resumed from automatically.
+Loading the trained weights for the validation stage with `from_pretrained` on the checkpoint. The provenance stamp records the model's `name_or_path`, so it would name a local directory, and the validation records would differ from a single process's.
+A save on SIGTERM. It depends on the grace period covering a 7.2 GB write, and is better judged against measured evictions.
+
+**Evidence.**
+(1) `TestResume` trains a tiny real policy with a real Adam straight through, and again from a save after update 2 in fresh objects: the weights are `torch.equal` and every draw matches, flat draws on both sides of the save included. Restarting Adam instead changes the draws.
+(2) Qwen3-0.6B ties its embedding to its output head. safetensors' `save_model` stores the pair once and `load_model` restores it still tied. Checked on the real model: 2.38 GB of float32 weights, saved in under a second and read back equal, tensor for tensor.
+(3) Qwen3's attention dropout is 0.0, so a training pass draws nothing random, and validating in train mode, where a single process leaves the model after `train()`, changes no number. The handoff sets train mode anyway, so the two paths match without relying on that.
+(4) On the real model, a three-problem run at four samples wrote byte-identical records three ways: as one process, as three stage processes, and killed with SIGKILL one update past its save at update 2, then started again with the same command, which resumed at draw 3 and replayed the lost draw.
+
+**Cost accepted.**
+A checkpoint is about 7.2 GB, 2.4 GB of weights and 4.8 GB of Adam moments, and two exist during a save. An interruption loses up to `--checkpoint-every` updates of work. A directory that holds a checkpoint resumes, so a fresh run needs a fresh directory, and the identity stamp is what stops one run from continuing another. Validation runs in train mode on both paths rather than in eval mode on both, because changing the single-process path would need its own reproduction run.
+
+**Pinned by.**
+`TestResume` and `TestCheckpointCadence` in `tests/test_trainer.py`. `tests/test_checkpoint.py`: the round trip, tied weights, a save killed before `LATEST` moves or failing while it writes, each identity field refused, and the lost-work count. In `tests/test_run_pipeline.py`: a run killed mid-training and started again writes the same records, at the same or another cadence, three stages write what one process writes, the handoff keeps the base model's name, and `--stage validate` refuses incomplete or mismatched inputs before the model loads.
 
 ## Forensics: obligation or convention
 
