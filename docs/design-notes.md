@@ -390,7 +390,7 @@ A save on SIGTERM. It depends on the grace period covering a 7.2 GB write, and i
 
 **Evidence.**
 (1) `TestResume` trains a tiny real policy with a real Adam straight through, and again from a save after update 2 in fresh objects: the weights are `torch.equal` and every draw matches, flat draws on both sides of the save included. Restarting Adam instead changes the draws.
-(2) Qwen3-0.6B ties its embedding to its output head. safetensors' `save_model` stores the pair once and `load_model` restores it still tied. Checked on the real model: 2.38 GB of float32 weights, saved in under a second and read back equal, tensor for tensor.
+(2) Qwen3-0.6B ties its embedding to its output head. safetensors' `save_model` stores the pair once and `load_model` restores it still tied, which `test_tied_weights_are_stored_once_and_load_still_tied` pins. On the real model a checkpoint holds 2.38 GB of float32 weights and 4.77 GB of Adam state, as measured by the three-way check in (4).
 (3) Qwen3's attention dropout is 0.0, so a training pass draws nothing random, and validating in train mode, where a single process leaves the model after `train()`, changes no number. The handoff sets train mode anyway, so the two paths match without relying on that.
 (4) On the real model, a three-problem run at four samples wrote byte-identical records three ways: as one process, as three stage processes, and killed with SIGKILL one update past its save at update 2, then started again with the same command, which resumed at draw 3 and replayed the lost draw.
 
