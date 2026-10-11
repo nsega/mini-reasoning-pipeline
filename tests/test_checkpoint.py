@@ -1,0 +1,216 @@
+"""Contract tests for checkpoint files: what a save writes, what a load
+refuses, and that a kill mid-save never leaves a run without a
+checkpoint to resume from.
+
+The policy is a real (tiny) module and the optimizer a real Adam that
+has taken steps, so the state round-tripped is the state that matters.
+
+Written with Claude (AI-written); see the README's Provenance section.
+"""
+import json
+
+import pytest
+import torch
+from safetensors import safe_open
+from torch import nn
+
+from mini_reasoning import checkpoint
+from mini_reasoning.checkpoint import (
+    IDENTITY, LATEST, PROGRESS, RESUMES, Writer, load_weights, log_resume,
+    read_latest, resume_from,
+)
+
+VOCAB = 32
+
+
+class TinyPolicy(nn.Module):
+    """A real module with an embedding and a head, like the policy's ends."""
+
+    def __init__(self, vocab=VOCAB, dim=8, tied=False):
+        super().__init__()
+        self.embed = nn.Embedding(vocab, dim)
+        self.head = nn.Linear(dim, vocab)
+        if tied:
+            self.head.weight = self.embed.weight
+
+
+def policy(seed=0, **kwargs):
+    torch.manual_seed(seed)
+    return TinyPolicy(**kwargs)
+
+
+def stepped_adam(model, steps=3):
+    """Adam with moments and step counts to save, not an empty state."""
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+    for _ in range(steps):
+        optimizer.zero_grad()
+        model.head(model.embed(torch.arange(4))).sum().backward()
+        optimizer.step()
+    return optimizer
+
+
+IDENTITY_VALUES = {"model": "tiny", "seed": 92, "steps": 40,
+                   "max_draws": 120, "group_size": 7, "lr": 1e-6,
+                   "pool": ["p1", "p2"]}
+HISTORY = [{"unique_id": "p1", "mean_reward": 0.5, "grad_norm": 3.0,
+            "stepped": True},
+           {"unique_id": "p2", "mean_reward": 0.0, "grad_norm": 0.0,
+            "stepped": False}]
+
+
+def saved_run(tmp_path, model=None, history=HISTORY, complete=False):
+    model = model if model is not None else policy()
+    optimizer = stepped_adam(model)
+    Writer(tmp_path, model, IDENTITY_VALUES).save(
+        optimizer, history, position=2, complete=complete)
+    return model, optimizer
+
+
+class TestRoundTrip:
+    """What a save writes is what a resume gets back, exactly."""
+
+    def test_weights_optimizer_history_and_position_come_back(self, tmp_path):
+        model, optimizer = saved_run(tmp_path)
+        saved = read_latest(tmp_path, IDENTITY_VALUES)
+        fresh = policy(seed=1)
+        resume = resume_from(saved, fresh)
+        for want, got in zip(model.parameters(), fresh.parameters()):
+            assert torch.equal(want, got)
+        want_state = optimizer.state_dict()
+        for index, tensors in want_state["state"].items():
+            for key, tensor in tensors.items():
+                assert torch.equal(resume.optimizer_state["state"][index][key],
+                                   tensor)
+        assert (resume.optimizer_state["param_groups"]
+                == want_state["param_groups"])
+        assert resume.history == HISTORY and resume.position == 2
+        assert saved.draws == 2 and saved.updates == 1
+        assert saved.complete is False
+
+    def test_tied_weights_are_stored_once_and_load_still_tied(self, tmp_path):
+        """Qwen3 ties its embedding to its output head. A copy that untied
+        them would train the two apart after the resume."""
+        model, _ = saved_run(tmp_path, model=policy(tied=True))
+        saved = read_latest(tmp_path, IDENTITY_VALUES)
+        with safe_open(saved.path / checkpoint.WEIGHTS, "pt") as stored:
+            assert len(list(stored.keys())) == 2  # embed (= head) and bias
+        fresh = policy(seed=1, tied=True)
+        load_weights(saved, fresh)
+        assert fresh.head.weight is fresh.embed.weight
+        assert torch.equal(fresh.embed.weight, model.embed.weight)
+
+    def test_progress_is_written_whole(self, tmp_path):
+        Writer(tmp_path, policy(), IDENTITY_VALUES).progress(5, 3)
+        assert json.loads((tmp_path / PROGRESS).read_text()) == {
+            "draws": 5, "updates": 3}
+
+
+class TestAtomicity:
+    """A kill at any moment leaves LATEST naming a complete checkpoint."""
+
+    def test_a_save_that_dies_before_latest_moves_leaves_the_old_one(
+            self, tmp_path, monkeypatch):
+        model = policy()
+        optimizer = stepped_adam(model)
+        writer = Writer(tmp_path, model, IDENTITY_VALUES)
+        writer.save(optimizer, HISTORY[:1], position=1, complete=False)
+
+        def killed(*args, **kwargs):
+            raise KeyboardInterrupt("killed mid-save")
+
+        monkeypatch.setattr(checkpoint.os, "replace", killed)
+        with pytest.raises(KeyboardInterrupt):
+            writer.save(optimizer, HISTORY, position=2, complete=False)
+        monkeypatch.undo()
+
+        saved = read_latest(tmp_path, IDENTITY_VALUES)
+        assert saved.path.name == "draw-0001"
+        assert (tmp_path / "draw-0002").exists()  # the partial write
+
+        writer.save(optimizer, HISTORY + HISTORY[:1], position=3,
+                    complete=False)
+        assert sorted(p.name for p in tmp_path.glob("draw-*")) == [
+            "draw-0003"]
+
+    def test_a_save_that_fails_while_writing_leaves_the_old_one(
+            self, tmp_path, monkeypatch):
+        """A full disk fails a save partway through its files, before
+        LATEST is touched."""
+        model = policy()
+        optimizer = stepped_adam(model)
+        writer = Writer(tmp_path, model, IDENTITY_VALUES)
+        writer.save(optimizer, HISTORY[:1], position=1, complete=False)
+
+        def full(*args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(checkpoint.torch, "save", full)
+        with pytest.raises(OSError):
+            writer.save(optimizer, HISTORY, position=2, complete=False)
+        monkeypatch.undo()
+        assert read_latest(tmp_path, IDENTITY_VALUES).path.name == "draw-0001"
+
+    def test_saving_over_the_current_checkpoint_is_refused(self, tmp_path):
+        model = policy()
+        optimizer = stepped_adam(model)
+        writer = Writer(tmp_path, model, IDENTITY_VALUES)
+        writer.save(optimizer, HISTORY, position=2, complete=False)
+        with pytest.raises(ValueError, match="current"):
+            writer.save(optimizer, HISTORY, position=2, complete=True)
+
+
+class TestRefusals:
+    """A checkpoint that is not this run's, or not whole, is refused."""
+
+    def test_no_checkpoint_reads_as_none(self, tmp_path):
+        assert read_latest(tmp_path, IDENTITY_VALUES) is None
+        assert read_latest(tmp_path / "absent", IDENTITY_VALUES) is None
+
+    @pytest.mark.parametrize("field", IDENTITY)
+    def test_each_identity_field_is_checked(self, tmp_path, field):
+        saved_run(tmp_path)
+        other = dict(IDENTITY_VALUES,
+                     **{field: ["p9"] if field == "pool" else "other"})
+        with pytest.raises(ValueError, match=field):
+            read_latest(tmp_path, other)
+
+    def test_another_dtype_is_refused_at_load(self, tmp_path):
+        """The copy would cast float32 weights silently into the wrong
+        model, so the dtype is checked against the loaded model."""
+        saved_run(tmp_path)
+        saved = read_latest(tmp_path, IDENTITY_VALUES)
+        with pytest.raises(ValueError, match="float64"):
+            load_weights(saved, policy().to(torch.float64))
+
+    def test_latest_naming_a_missing_checkpoint_raises(self, tmp_path):
+        """Not a fresh start: someone removed part of a checkpoint."""
+        saved_run(tmp_path)
+        (tmp_path / LATEST).write_text("draw-0099\n")
+        with pytest.raises(ValueError, match="draw-0099"):
+            read_latest(tmp_path, IDENTITY_VALUES)
+
+    def test_an_unknown_format_raises(self, tmp_path):
+        saved_run(tmp_path)
+        state_path = tmp_path / "draw-0002" / checkpoint.STATE
+        state = json.loads(state_path.read_text())
+        state["format"] = 2
+        state_path.write_text(json.dumps(state))
+        with pytest.raises(ValueError, match="format"):
+            read_latest(tmp_path, IDENTITY_VALUES)
+
+
+class TestLostWork:
+    """What an interruption cost, for the lab's eviction-cost table."""
+
+    def test_lost_work_is_progress_minus_the_checkpoint(self, tmp_path):
+        saved_run(tmp_path)
+        (tmp_path / PROGRESS).write_text(
+            json.dumps({"draws": 5, "updates": 2}))
+        saved = read_latest(tmp_path, IDENTITY_VALUES)
+        line = log_resume(tmp_path, saved)
+        assert line == "resuming at draw 2, update 1 (lost 3 draws, 1 update)"
+        entries = [json.loads(row) for row in
+                   (tmp_path / RESUMES).read_text().splitlines()]
+        assert len(entries) == 1
+        assert entries[0]["lost"] == {"draws": 3, "updates": 1}
+        assert entries[0]["resumed_at"] == {"draws": 2, "updates": 1}
