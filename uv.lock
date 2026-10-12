@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1002,6 +1002,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "matplotlib" },
+    { name = "safetensors" },
     { name = "sympy" },
     { name = "torch" },
     { name = "transformers" },
@@ -1018,6 +1019,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", specifier = ">=3.9" },
+    { name = "safetensors", specifier = ">=0.8" },
     { name = "sympy", specifier = ">=1.13" },
     { name = "torch", specifier = ">=2.6" },
     { name = "transformers", specifier = ">=5.15,<6" },

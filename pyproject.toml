@@ -8,6 +8,7 @@ dependencies = [
     "transformers>=5.15,<6",
     "sympy>=1.13",
     "matplotlib>=3.9",
+    "safetensors>=0.8",
 ]
 
 [dependency-groups]

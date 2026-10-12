@@ -9,13 +9,16 @@ The policy is a real (tiny) causal LM rather than a double, so the
 gradients are real gradients. Generation is injected, since only that
 step needs a trained model.
 """
+import copy
+
 import pytest
 import torch
 from torch import nn
 
 from mini_reasoning import grpo
 from mini_reasoning.trainer import (
-    Rollouts, rollout_rewards, sequence_logprobs, train, train_step,
+    Resume, Rollouts, draw_cap, rollout_rewards, sequence_logprobs, train,
+    train_step,
 )
 
 VOCAB, PROMPT_LEN = 32, 3
@@ -372,3 +375,166 @@ class TestSeeding:
         train(policy(), None, [problem("live")], steps=3,
               rollout=recording, group_size=2, lr=1e-3, seed=40)
         assert seen == [40, 41, 42]
+
+
+class Recorder:
+    """A Checkpointer that keeps what each save would write, in memory."""
+
+    def __init__(self, model):
+        self.model = model
+        self.saves, self.progress_calls = [], []
+
+    def progress(self, draws, updates):
+        self.progress_calls.append((draws, updates))
+
+    def save(self, optimizer, history, position, *, complete):
+        self.saves.append({
+            "weights": copy.deepcopy(self.model.state_dict()),
+            "optimizer": copy.deepcopy(optimizer.state_dict()),
+            "history": copy.deepcopy(history), "position": position,
+            "complete": complete,
+            "updates": sum(s["stepped"] for s in history)})
+
+
+def resume_from(save):
+    return Resume(history=save["history"], position=save["position"],
+                  optimizer_state=save["optimizer"])
+
+
+class TestResume:
+    """A run stopped at a save and resumed in fresh objects ends exactly
+    where an unbroken run does: weights, Adam state and every draw."""
+
+    POOL = [problem(str(i)) for i in range(4)]
+    SETTINGS = dict(steps=6, rollout=random_rollout, group_size=3, lr=1e-2,
+                    seed=12)
+
+    def unbroken(self):
+        model = policy()
+        recorder = Recorder(model)
+        history = train(model, None, self.POOL, checkpointer=recorder,
+                        checkpoint_every=2, **self.SETTINGS)
+        return model, history, recorder
+
+    def test_a_resumed_run_ends_where_an_unbroken_one_does(self):
+        """Resumed from the save after update 2, so the draws after it
+        are replayed, flat ones included: the per-draw seeds and the
+        restored retired set are both under test."""
+        model, history, recorder = self.unbroken()
+        save = recorder.saves[0]
+        assert save["updates"] == 2 and not save["complete"]
+        stepped = [s["stepped"] for s in history["steps"]]
+        cut = len(save["history"])
+        assert not all(stepped[:cut]) and not all(stepped[cut:]), (
+            "the run must hold flat draws before and after the save, or "
+            "this test no longer exercises the retired set")
+
+        resumed = policy(seed=1)
+        resumed.load_state_dict(save["weights"])
+        torch.manual_seed(99)  # whatever the new process did first
+        got = train(resumed, None, self.POOL, resume=resume_from(save),
+                    **self.SETTINGS)
+        assert got == history
+        for want, have in zip(model.parameters(), resumed.parameters()):
+            assert torch.equal(want, have)
+
+    def test_restarting_adam_instead_changes_the_run(self):
+        """The negative control: the optimizer state is load-bearing."""
+        model, history, recorder = self.unbroken()
+        save = recorder.saves[0]
+        fresh = torch.optim.Adam(policy().parameters(), lr=1e-2)
+        resumed = policy(seed=1)
+        resumed.load_state_dict(save["weights"])
+        got = train(resumed, None, self.POOL,
+                    resume=Resume(history=save["history"],
+                                  position=save["position"],
+                                  optimizer_state=fresh.state_dict()),
+                    **self.SETTINGS)
+        assert got["steps"] != history["steps"]
+
+    def test_a_complete_resume_returns_the_run_and_saves_nothing(self):
+        """How the entry point reads a finished checkpoint back."""
+        model, history, recorder = self.unbroken()
+        final = recorder.saves[-1]
+        assert final["complete"]
+        resumed = policy(seed=1)
+        resumed.load_state_dict(final["weights"])
+        again = Recorder(resumed)
+        got = train(resumed, None, self.POOL, resume=resume_from(final),
+                    checkpointer=again, **self.SETTINGS)
+        assert got == history
+        assert again.saves == [] and again.progress_calls == []
+
+    def test_a_resume_needs_the_seed(self):
+        optimizer = torch.optim.Adam(policy().parameters())
+        with pytest.raises(ValueError, match="seed"):
+            train(policy(), None, [PROBLEM], steps=1,
+                  rollout=rollout_of(SPLIT), group_size=2,
+                  resume=Resume(history=[], position=0,
+                                optimizer_state=optimizer.state_dict()))
+
+    def test_a_resume_from_another_pool_is_refused(self):
+        optimizer = torch.optim.Adam(policy().parameters())
+        stray = [{"unique_id": "elsewhere", "mean_reward": 0.5,
+                  "grad_norm": 1.0, "stepped": True}]
+        with pytest.raises(ValueError, match="elsewhere"):
+            train(policy(), None, [PROBLEM], steps=2,
+                  rollout=rollout_of(SPLIT), group_size=2, seed=0,
+                  resume=Resume(history=stray, position=1,
+                                optimizer_state=optimizer.state_dict()))
+
+
+class TestCheckpointCadence:
+    """When the trainer asks for a save, and what it reports."""
+
+    def run(self, steps, every):
+        model = policy()
+        recorder = Recorder(model)
+        history = train(model, None, [problem("live")], steps=steps,
+                        rollout=rollout_by({"problem live": SPLIT}),
+                        group_size=2, lr=1e-3, seed=0, checkpointer=recorder,
+                        checkpoint_every=every)
+        return history, recorder
+
+    def test_saves_fall_on_every_nth_update_and_at_the_stop(self):
+        _, recorder = self.run(steps=5, every=2)
+        assert [(s["updates"], s["complete"]) for s in recorder.saves] == [
+            (2, False), (4, False), (5, True)]
+
+    def test_a_save_due_on_the_stopping_draw_is_the_final_one(self):
+        _, recorder = self.run(steps=4, every=2)
+        assert [(s["updates"], s["complete"]) for s in recorder.saves] == [
+            (2, False), (4, True)]
+
+    def test_flat_draws_after_a_save_get_a_final_save_of_their_own(self):
+        """Same update count, more draws: the reason checkpoints are
+        named by draw. "fading" steps, then goes flat, and "flat" never
+        steps, so the pool runs out one update after the last save."""
+        outcomes = iter([SPLIT, ALL_WRONG])
+
+        def rollout(model, tokenizer, statement, n):
+            if statement == "problem fading":
+                return rollouts_of(next(outcomes))
+            return rollouts_of(ALL_WRONG)
+
+        model = policy()
+        recorder = Recorder(model)
+        history = train(model, None, [problem("fading"), problem("flat")],
+                        steps=5, rollout=rollout, group_size=2, lr=1e-3,
+                        seed=0, checkpointer=recorder, checkpoint_every=1)
+        assert history["stopped"] == "pool_exhausted"
+        assert [(len(s["history"]), s["updates"], s["complete"])
+                for s in recorder.saves] == [(1, 1, False), (3, 1, True)]
+
+    def test_progress_follows_every_draw(self):
+        history, recorder = self.run(steps=3, every=2)
+        assert recorder.progress_calls == [(1, 1), (2, 2), (3, 3)]
+
+    def test_a_cadence_below_one_raises(self):
+        with pytest.raises(ValueError, match="checkpoint_every"):
+            train(policy(), None, [PROBLEM], steps=1,
+                  rollout=rollout_of(SPLIT), group_size=2,
+                  checkpoint_every=0)
+
+    def test_the_draw_cap_defaults_to_three_times_steps(self):
+        assert draw_cap(40, None) == 120 and draw_cap(40, 7) == 7

@@ -262,6 +262,18 @@ def _package_version(name: str) -> str | None:
         return None
 
 
+def library_versions() -> dict:
+    """The versions of the libraries that decide what a run draws.
+
+    The eval's provenance stamp and every training checkpoint record
+    them. Neither refuses on them, since a patch bump is not by itself a
+    different policy, but a mismatch is the first thing to look at when
+    records that should match do not.
+    """
+    return {"torch": torch.__version__,
+            "transformers": _package_version("transformers")}
+
+
 def provenance(model, *, seed, n_samples, fallback) -> dict:
     """What produced a set of records, for a reader and for a reuse check.
 
@@ -290,8 +302,7 @@ def provenance(model, *, seed, n_samples, fallback) -> dict:
         "seed": seed,
         "n_samples": n_samples,
         "fallback": fallback,
-        "torch": torch.__version__,
-        "transformers": _package_version("transformers"),
+        **library_versions(),
     }
 
 

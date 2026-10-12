@@ -158,6 +158,49 @@ extraction strictness. That circularity is deliberate and is the point
 of the three-role design, but it means a before/after gain is a gain
 against this grader, not an independent one.
 
+## Checkpoints and stages
+
+A run can survive being killed. Given a directory, training saves its
+full state there every five optimizer updates, and the same command
+started again resumes from the latest save:
+
+```bash
+uv run python run_pipeline.py --checkpoint-dir checkpoints/run-1
+```
+
+A resumed run writes the same records as one never interrupted. Each
+training draw reseeds from its own index, so a draw replayed after a
+resume repeats the one the killed process made, and a save holds what
+no seed can rebuild: the weights, Adam's state and the loop's place in
+the pool. Once its training has begun, a run started again also
+reuses the baseline it already wrote, and says so. A fresh run
+recomputes the baseline even when `--out-dir` holds an earlier one.
+A checkpoint records the torch and transformers versions it was saved
+under, and a run started under others warns and goes on.
+Checkpointing is off unless the flag is given, and
+`--checkpoint-every` sets the cadence. A save of the default model is
+about 7.2 GB, and two exist while one is written, so the directory
+needs about 15 GB free. A fresh run needs a fresh directory: one that
+holds another run's checkpoint is refused, naming the setting that
+differs. Keep the directory on a local disk or a block volume: on an
+object-storage mount such as gcsfuse a rename can be a copy and a
+delete, and a save killed midway could then leave no complete
+checkpoint behind.
+
+`--stage` runs the three stages as separate processes, handing over
+through the out and checkpoint directories, and together they write
+what the single command writes:
+
+```bash
+uv run python run_pipeline.py --stage baseline
+uv run python run_pipeline.py --stage train --checkpoint-dir checkpoints/run-1
+uv run python run_pipeline.py --stage validate --checkpoint-dir checkpoints/run-1
+```
+
+`--skip-training` is `--stage baseline` under its older name. The
+design is in
+[docs/specs/2026-10-09-checkpoint-resume-design.md](docs/specs/2026-10-09-checkpoint-resume-design.md).
+
 ## Provenance
 
 This repository was built with AI assistance (Claude). Commit trailers
@@ -175,16 +218,17 @@ alone would mislead in both directions, so the split is set out here.
   it was ported unchanged instead, as its comment now says.
 - **Written with AI assistance:** GRPO, the trainer, the evaluator and
   the entry point (`grpo.py`, `trainer.py`, `evaluate.py` and
-  `run_pipeline.py`). `report.py` and its tests are AI-written, and
-  their headers say so.
+  `run_pipeline.py`). `report.py`, `checkpoint.py` and their tests are
+  AI-written, and their headers say so.
 - **Tests and scaffolding:** every test file began in the AI-written
   scaffold commit or was extended with AI assistance. The data script
   is AI-written, and its header says so.
 - **Commit trailers:** commits before #12 carry a `Co-Authored-By`
   trailer where Claude assisted, with one exception: `e28f9f0`, which
   brought in the ported `_normalize_text`, has none. Commits from #12
-  onward were AI-assisted as well but carry no trailer; this section
-  is their disclosure.
+  through #25 were AI-assisted as well but carry no trailer; this
+  section is their disclosure. From the checkpoint and resume work on,
+  AI-assisted commits carry the trailer again.
 
 The evaluation subset derives from MATH-500 (Hendrycks et al.;
 HuggingFaceH4/MATH-500), seed-fixed and frozen.

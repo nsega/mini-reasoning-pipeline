@@ -25,8 +25,13 @@ decisions are recorded in docs/design-notes.md.
 - A flat problem is also retired, and the budget counts updates rather
   than draws, so training makes further passes over the problems that
   still give gradient instead of spending draws on ones that do not.
+- A resume is exact because every draw reseeds from its index: train()
+  takes back the history, the pool position and Adam's state, and the
+  draws after a checkpoint replay as the interrupted run made them. The
+  files are checkpoint.py's; the loop only says when to save.
 """
 from dataclasses import dataclass
+from typing import Protocol
 
 import torch
 
@@ -34,6 +39,57 @@ from mini_reasoning import grpo, verifier
 from mini_reasoning.evaluate import PROMPT
 
 MAX_GRAD_NORM = 1.0
+DRAWS_PER_STEP = 3
+
+
+def draw_cap(steps: int, max_draws: int | None) -> int:
+    """The draw cap train() enforces: max_draws, or 3 x steps when unset.
+
+    Exposed so a checkpoint's identity records the cap the loop really
+    used, and a run that names the default explicitly is the same run.
+    """
+    return DRAWS_PER_STEP * steps if max_draws is None else max_draws
+
+
+@dataclass(frozen=True)
+class Resume:
+    """Where a checkpointed run picks up.
+
+    The weights are not here: the caller loads them into the model
+    before calling train(), which owns the optimizer and so restores
+    its state itself.
+
+    Attributes:
+        history: The per-draw reports made before the checkpoint, in
+            order, as train() returns them under "steps".
+        position: The pool index the loop examines next.
+        optimizer_state: Adam's state_dict at the checkpoint.
+    """
+    history: list[dict]
+    position: int
+    optimizer_state: dict
+
+
+class Checkpointer(Protocol):
+    """What train() calls to record progress and save its state.
+
+    The trainer decides when, since the cadence is counted in updates.
+    The checkpointer decides how, and holds the model it saves.
+    """
+
+    def progress(self, draws: int, updates: int) -> None:
+        """Records how far training has got. Called after every draw."""
+
+    def save(self, optimizer, history: list[dict], position: int, *,
+             complete: bool) -> None:
+        """Saves the full training state.
+
+        Args:
+            optimizer: The optimizer whose state is saved.
+            history: The per-draw reports so far.
+            position: The pool index the loop examines next.
+            complete: True on the save made when the loop stops.
+        """
 
 
 @dataclass(frozen=True)
@@ -192,7 +248,10 @@ def train_step(model, optimizer, problem, tokenizer, *, rollout,
 def train(model, tokenizer, problems, *, steps: int, rollout,
           group_size: int = 7, lr: float = 1e-6,
           max_grad_norm: float = MAX_GRAD_NORM,
-          max_draws: int | None = None, seed: int | None = None) -> dict:
+          max_draws: int | None = None, seed: int | None = None,
+          resume: Resume | None = None,
+          checkpointer: Checkpointer | None = None,
+          checkpoint_every: int = 5) -> dict:
     """Runs GRPO until `steps` updates, cycling the problems in order.
 
     A draw whose group is flat takes no step and retires its problem for
@@ -205,10 +264,13 @@ def train(model, tokenizer, problems, *, steps: int, rollout,
 
     Each draw is seeded from `seed` plus its index, counting from 0, so
     which problems retire repeats, and a run that skipped the baseline
-    eval trains exactly like one that ran it.
+    eval trains exactly like one that ran it. The same seeding is what
+    makes a resume exact: the draws after a checkpoint replay with the
+    seeds the interrupted run gave them, so no RNG state is saved.
 
     Args:
-        model: The policy to train, in place.
+        model: The policy to train, in place. On a resume, the caller
+            has already loaded the checkpoint's weights into it.
         tokenizer: Passed through to the rollout function.
         problems: The training pool, cycled in order.
         steps: Optimizer updates to reach.
@@ -222,31 +284,60 @@ def train(model, tokenizer, problems, *, steps: int, rollout,
             RNG alone. The caller keeps this stream apart from any other
             stage's seeds: a draw sharing an eval's seed and sampling
             call replays that eval's samples.
+        resume: Where a checkpointed run picks up, or None to start
+            from the first draw.
+        checkpointer: Told of progress after every draw and asked to
+            save after every `checkpoint_every` updates and once when
+            the loop stops; None saves nothing.
+        checkpoint_every: The save cadence, in updates.
 
     Returns:
         "steps", one report per draw in order (the name predates dynamic
         sampling, and stored runs depend on it), and "updates", "draws"
         and "stopped": which limit ended the run, "updates",
-        "max_draws" or "pool_exhausted", checked in that order.
+        "max_draws" or "pool_exhausted", checked in that order. A
+        resumed run returns the draws from before the resume as well.
 
     Raises:
-        ValueError: if steps or max_draws is below one, or problems is
-            empty.
+        ValueError: if steps, max_draws or checkpoint_every is below
+            one, if problems is empty, or if a resume comes without a
+            seed or names a problem outside the pool.
     """
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")
     if not problems:
         raise ValueError("train needs at least one problem")
-    if max_draws is None:
-        max_draws = 3 * steps
+    max_draws = draw_cap(steps, max_draws)
     if max_draws < 1:
         raise ValueError(f"max_draws must be >= 1, got {max_draws}")
+    if checkpoint_every < 1:
+        raise ValueError(
+            f"checkpoint_every must be >= 1, got {checkpoint_every}")
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     model.train()
     pool = {p["unique_id"] for p in problems}
     history, retired = [], set()
     updates = draws = position = 0
-    while updates < steps and draws < max_draws and retired != pool:
+    if resume is not None:
+        if seed is None:
+            raise ValueError("a resume needs the seed: without per-draw "
+                             "seeds the replayed draws cannot match")
+        outside = sorted({s["unique_id"] for s in resume.history} - pool)
+        if outside:
+            raise ValueError(f"the resumed history drew {outside}, which "
+                             "are not in this pool")
+        optimizer.load_state_dict(resume.optimizer_state)
+        history = [dict(s) for s in resume.history]
+        draws = len(history)
+        updates = sum(s["stepped"] for s in history)
+        retired = {s["unique_id"] for s in history if not s["stepped"]}
+        position = resume.position
+    resumed_at = draws
+
+    def going() -> bool:
+        return updates < steps and draws < max_draws and retired != pool
+
+    while going():
         problem = problems[position % len(problems)]
         position += 1
         if problem["unique_id"] in retired:
@@ -262,6 +353,16 @@ def train(model, tokenizer, problems, *, steps: int, rollout,
             updates += 1
         else:
             retired.add(problem["unique_id"])
+        if checkpointer is not None:
+            checkpointer.progress(draws, updates)
+            # A save due on the stopping draw waits for the final one
+            # below, so the same state is never written twice.
+            if (report["stepped"] and updates % checkpoint_every == 0
+                    and going()):
+                checkpointer.save(optimizer, history, position,
+                                  complete=False)
+    if checkpointer is not None and draws > resumed_at:
+        checkpointer.save(optimizer, history, position, complete=True)
     if updates == steps:
         stopped = "updates"
     elif draws == max_draws:
