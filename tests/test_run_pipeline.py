@@ -10,6 +10,7 @@ Model loading is the one step no test can reach, so it is injected,
 as sampling is in tests/test_evaluate.py.
 """
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ from mini_reasoning.scorers import (
 from mini_reasoning.trainer import Rollouts
 from run_pipeline import (
     build_parser, build_scorer, load_problems, run, split_held_out,
-    vote_accuracy,
+    vote_accuracy, write_results,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -202,6 +203,25 @@ class TestResults:
         written = json.loads(out.read_text())
         assert written["accuracy"] == pytest.approx(0.5)
         assert [r["unique_id"] for r in written["records"]] == ["p1", "p2"]
+
+
+    def test_an_interrupted_write_leaves_the_old_record_whole(
+            self, tmp_path, monkeypatch):
+        """Found in review: a plain write killed partway left a torn
+        record, and automatic baseline reuse then failed on it at every
+        requeue. A record is written whole or not at all."""
+        out = tmp_path / "results"
+        write_results(out, "baseline", {"accuracy": 0.5})
+        before = (out / "baseline.json").read_text()
+
+        def killed(*args, **kwargs):
+            raise KeyboardInterrupt("killed mid-write")
+
+        monkeypatch.setattr(os, "replace", killed)
+        with pytest.raises(KeyboardInterrupt):
+            write_results(out, "baseline", {"accuracy": 0.75})
+        monkeypatch.undo()
+        assert (out / "baseline.json").read_text() == before
 
 
 class TestReuseBaseline:

@@ -326,11 +326,15 @@ def vote_accuracy(records) -> float:
 
 
 def write_results(out_dir, name: str, results: dict) -> Path:
-    """Writes one stage's results, records and all, under out_dir."""
+    """Writes one stage's results, records and all, under out_dir.
+
+    Whole or not at all: a requeued run reads back what it finds here,
+    and a record torn by a kill would fail it on every attempt.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{name}.json"
-    path.write_text(json.dumps(results, indent=2) + "\n")
+    checkpoint.replace_text(path, json.dumps(results, indent=2) + "\n")
     return path
 
 

@@ -94,9 +94,10 @@ def _sync(path: Path) -> None:
         os.close(fd)
 
 
-def _replace_text(path: Path, text: str) -> None:
+def replace_text(path: Path, text: str) -> None:
     """Writes path whole or not at all: a reader sees the old text or the
-    new, never a torn one."""
+    new, never a torn one. The entry point writes its records this way
+    too, since a requeued run reads back whatever it finds."""
     partial = path.with_name(path.name + ".partial")
     partial.write_text(text)
     _sync(partial)
@@ -123,7 +124,7 @@ class Writer:
 
     def progress(self, draws: int, updates: int) -> None:
         """Records how far training has got, for the lost-work count."""
-        _replace_text(self.directory / PROGRESS,
+        replace_text(self.directory / PROGRESS,
                       json.dumps({"draws": draws, "updates": updates}) + "\n")
 
     def save(self, optimizer, history: list[dict], position: int, *,
@@ -153,7 +154,7 @@ class Writer:
         for item in (target / WEIGHTS, target / OPTIMIZER, target / STATE,
                      target):
             _sync(item)
-        _replace_text(latest, name + "\n")
+        replace_text(latest, name + "\n")
         for old in self.directory.glob(PREFIX + "*"):
             if old.name != name:
                 shutil.rmtree(old)
