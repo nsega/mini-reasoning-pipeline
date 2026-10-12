@@ -163,6 +163,28 @@ class TestAtomicity:
         assert (tmp_path / "draw-notes.txt").read_text() == "kept"
         assert read_latest(tmp_path, IDENTITY_VALUES) is not None
 
+    def test_leftovers_are_pruned_before_a_save_writes(
+            self, tmp_path, monkeypatch):
+        """Found in review: leftovers from a killed save or prune went only
+        after the next save, so a requeue could need room for three
+        checkpoints at once. While a save writes, only the checkpoint
+        LATEST names may remain beside it."""
+        model = policy()
+        optimizer = stepped_adam(model)
+        writer = Writer(tmp_path, model, IDENTITY_VALUES)
+        writer.save(optimizer, HISTORY[:1], position=1, complete=False)
+        (tmp_path / "draw-0005").mkdir()  # left by a killed save
+        present = []
+        real_save_model = checkpoint.save_model
+
+        def recording(model, filename):
+            present.append(sorted(p.name for p in tmp_path.glob("draw-*")))
+            real_save_model(model, filename)
+
+        monkeypatch.setattr(checkpoint, "save_model", recording)
+        writer.save(optimizer, HISTORY, position=2, complete=False)
+        assert present == [["draw-0001", "draw-0002"]]
+
     def test_saving_over_the_current_checkpoint_is_refused(self, tmp_path):
         model = policy()
         optimizer = stepped_adam(model)

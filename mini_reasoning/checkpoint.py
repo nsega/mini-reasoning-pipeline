@@ -15,9 +15,11 @@ rebuilds, and that is what a checkpoint holds:
 - state.json: the draw history and the pool position, the run's
   identity, and whether the loop had stopped.
 
-A save writes a new draw-NNNN directory, then repoints LATEST at it
-with os.replace, then deletes the older ones, so a kill at any moment
-leaves LATEST naming a complete checkpoint. Directories are named by
+A save first clears whatever a killed save or prune left behind, then
+writes a new draw-NNNN directory, repoints LATEST at it with
+os.replace, and deletes the previous one, so a kill at any moment
+leaves LATEST naming a complete checkpoint, and a save never needs room
+for more than two. Directories are named by
 draw count because a final save can follow a periodic one at the same
 update count, when flat draws come after the last update.
 
@@ -153,7 +155,7 @@ class Writer:
 
     def save(self, optimizer, history: list[dict], position: int, *,
              complete: bool) -> None:
-        """Writes a checkpoint, repoints LATEST at it, then prunes.
+        """Clears leftovers, writes a checkpoint, repoints LATEST, prunes.
 
         Raises:
             ValueError: if a save at this draw count is already current.
@@ -162,11 +164,14 @@ class Writer:
         """
         name = f"{PREFIX}{len(history):04d}"
         latest = self.directory / LATEST
-        if latest.exists() and latest.read_text().strip() == name:
+        current = latest.read_text().strip() if latest.exists() else None
+        if current == name:
             raise ValueError(f"{name} is the current checkpoint already")
+        # Leftovers of a killed save or prune go before anything is
+        # written, so the disk holds at most the current checkpoint and
+        # this one.
+        self._prune(keep=current)
         target = self.directory / name
-        if target.exists():
-            shutil.rmtree(target)  # a partial write from a killed save
         target.mkdir()
         save_model(self.model, str(target / WEIGHTS))
         torch.save(optimizer.state_dict(), target / OPTIMIZER)
@@ -180,10 +185,16 @@ class Writer:
                      target):
             _sync(item)
         replace_text(latest, name + "\n")
+        self._prune(keep=name)
+
+    def _prune(self, keep: str | None) -> None:
+        """Deletes every checkpoint directory but keep.
+
+        Checkpoints are directories. Anything else named like one is not
+        this module's to delete.
+        """
         for old in self.directory.glob(PREFIX + "*"):
-            # Checkpoints are directories. Anything else named like one
-            # is not this module's to delete.
-            if old.name != name and old.is_dir():
+            if old.name != keep and old.is_dir():
                 shutil.rmtree(old)
 
 
