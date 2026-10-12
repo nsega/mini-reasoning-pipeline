@@ -7,7 +7,10 @@ has taken steps, so the state round-tripped is the state that matters.
 
 Written with Claude (AI-written); see the README's Provenance section.
 """
+import errno
 import json
+import os
+import stat
 
 import pytest
 import torch
@@ -157,6 +160,42 @@ class TestAtomicity:
         writer.save(optimizer, HISTORY, position=2, complete=False)
         with pytest.raises(ValueError, match="current"):
             writer.save(optimizer, HISTORY, position=2, complete=True)
+
+
+class TestVolumes:
+    """Volumes that cannot sync a directory, such as FUSE mounts."""
+
+    @staticmethod
+    def failing_fsync(monkeypatch, error, *, directories):
+        """os.fsync raising error for directories, or for files."""
+        real = os.fsync
+
+        def fsync(fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode) == directories:
+                raise OSError(error, os.strerror(error))
+            real(fd)
+
+        monkeypatch.setattr(checkpoint.os, "fsync", fsync)
+
+    @pytest.mark.parametrize("error", [errno.EINVAL, errno.ENOTSUP])
+    def test_a_volume_that_cannot_sync_a_directory_still_checkpoints(
+            self, tmp_path, monkeypatch, error):
+        """Found in review: gcsfuse and similar mounts refuse a directory
+        fsync, which crashed training at its first draw."""
+        self.failing_fsync(monkeypatch, error, directories=True)
+        model, _ = saved_run(tmp_path)
+        Writer(tmp_path, model, IDENTITY_VALUES).progress(3, 1)
+        assert read_latest(tmp_path, IDENTITY_VALUES) is not None
+        assert json.loads((tmp_path / PROGRESS).read_text()) == {
+            "draws": 3, "updates": 1}
+
+    def test_a_file_that_cannot_sync_still_fails_the_save(
+            self, tmp_path, monkeypatch):
+        """Only a directory's sync may be refused. A file that cannot
+        reach the disk is a checkpoint that may not exist."""
+        self.failing_fsync(monkeypatch, errno.EINVAL, directories=False)
+        with pytest.raises(OSError):
+            saved_run(tmp_path)
 
 
 class TestRefusals:

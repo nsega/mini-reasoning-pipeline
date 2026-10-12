@@ -21,12 +21,19 @@ leaves LATEST naming a complete checkpoint. Directories are named by
 draw count because a final save can follow a periodic one at the same
 update count, when flat draws come after the last update.
 
+That guarantee needs an atomic rename, which a local disk or a block
+volume gives. On an object-storage mount such as gcsfuse a rename can
+be a copy and a delete, so checkpoints belong on the former. Such
+mounts may also refuse to sync a directory, which only loosens how
+soon a rename is durable, so that refusal is tolerated.
+
 progress.json and resumes.jsonl beside them measure the work an
 eviction cost. They stay out of the run's records on purpose: a resumed
 run's training.json must equal a clean run's byte for byte.
 
 Written with Claude (AI-written); see the README's Provenance section.
 """
+import errno
 import json
 import os
 import shutil
@@ -52,6 +59,9 @@ STATE = "state.json"
 # loaded model itself, since only the model can say what it holds.
 IDENTITY = ("model", "seed", "steps", "max_draws", "group_size", "lr",
             "pool")
+# What a volume that cannot sync a directory answers. ENOTSUP and
+# EOPNOTSUPP are one value on Linux and two on macOS.
+UNSYNCABLE_DIRECTORY = {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
 
 
 @dataclass(frozen=True)
@@ -86,10 +96,21 @@ def _dtype(model) -> str:
 
 def _sync(path: Path) -> None:
     """Flushes a file or directory to disk, so a node that dies after a
-    save does not take the save with it."""
+    save does not take the save with it.
+
+    A directory sync makes a rename survive a crash. A volume that
+    refuses one, as FUSE mounts can with EINVAL or ENOTSUP, is
+    tolerated: LATEST may then come back naming the previous
+    checkpoint, which is still complete. A file sync is never optional,
+    since a file that cannot reach the disk is a checkpoint that may not
+    exist.
+    """
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)
+    except OSError as err:
+        if not (err.errno in UNSYNCABLE_DIRECTORY and path.is_dir()):
+            raise
     finally:
         os.close(fd)
 

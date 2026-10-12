@@ -177,7 +177,10 @@ the pool. Checkpointing is off unless the flag is given, and
 about 7.2 GB, and two exist while one is written, so the directory
 needs about 15 GB free. A fresh run needs a fresh directory: one that
 holds another run's checkpoint is refused, naming the setting that
-differs.
+differs. Keep the directory on a local disk or a block volume: on an
+object-storage mount such as gcsfuse a rename can be a copy and a
+delete, and a save killed midway could then leave no complete
+checkpoint behind.
 
 `--stage` runs the three stages as separate processes, handing over
 through the out and checkpoint directories, and together they write
