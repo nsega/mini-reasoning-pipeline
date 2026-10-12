@@ -447,15 +447,22 @@ def training_stage(args, model, tokenizer, pool, held_out, *,
     if args.checkpoint_dir is not None:
         if saved is not None:
             resume = checkpoint.resume_from(saved, model)
-            # Logged once the state has loaded, so a resume that fails
-            # leaves no record, and only when training has work left.
-            if not saved.complete:
-                print(checkpoint.log_resume(args.checkpoint_dir, saved))
+        # Logged once the state has loaded, so a resume that fails leaves
+        # no record, and only when training has work left. A restart
+        # before the first save is logged too, counted from draw 0.
+        if saved is None or not saved.complete:
+            line = checkpoint.log_resume(args.checkpoint_dir, saved)
+            if line is not None:
+                print(line)
         writer = checkpoint.Writer(args.checkpoint_dir, model, identity)
+        # Progress restarts where this attempt does. At zero it marks that
+        # training began, so a requeue before the first draw ends still
+        # reuses the baseline. After a resume it keeps the next resume
+        # from counting this attempt's predecessor's loss again.
         if saved is None:
-            # Marks the start, so a requeue before the first draw ends
-            # still finds training began and reuses the baseline.
             writer.progress(0, 0)
+        else:
+            writer.progress(saved.draws, saved.updates)
     history = trainer.train(model, tokenizer, pool, steps=args.steps,
                             rollout=rollout, group_size=args.n_samples,
                             lr=args.lr, max_draws=args.max_draws,

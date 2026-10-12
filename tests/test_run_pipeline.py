@@ -741,6 +741,38 @@ class TestResumeAfterAKill:
         assert "transformers 0.0.1" in capsys.readouterr().err
         assert results["training"]["updates"] == 4
 
+    def test_an_eviction_before_the_first_save_is_logged(
+            self, tmp_path, capsys):
+        """Found in review: with no save yet, the restart reset progress
+        to zero and logged nothing, so the lost draws went unmeasured."""
+        args = run_dir(tmp_path, "run", **{"--steps": 4,
+                                           "--checkpoint-every": 5})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(3))
+        capsys.readouterr()
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        assert ("resuming at draw 0, update 0 (lost 3 draws, 2 updates)"
+                in capsys.readouterr().out)
+
+    def test_a_second_eviction_before_any_draw_is_not_counted_twice(
+            self, tmp_path):
+        """Found in review: progress kept the first attempt's reach until
+        the resumed attempt finished a draw, so an eviction in between
+        counted the first attempt's loss again."""
+        args = run_dir(tmp_path, "run", **{"--steps": 4,
+                                           "--checkpoint-every": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(4))
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(0))
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        log = Path(args.checkpoint_dir) / "resumes.jsonl"
+        lost = [json.loads(row)["lost"] for row in log.read_text().splitlines()]
+        assert lost == [{"draws": 1, "updates": 1}, {"draws": 0, "updates": 0}]
+
     def test_a_checkpoint_from_another_run_is_refused_before_loading(
             self, tmp_path):
         args = run_dir(tmp_path, "run", **{"--steps": 4,

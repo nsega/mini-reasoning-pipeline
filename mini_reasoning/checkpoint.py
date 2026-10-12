@@ -291,15 +291,20 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
-def log_resume(directory, saved: Saved) -> str:
+def log_resume(directory, saved: Saved | None) -> str | None:
     """Appends one line to resumes.jsonl and returns it as printed.
 
-    Lost work is what progress.json says the interrupted process reached,
-    minus what the checkpoint holds.
+    Lost work is what progress.json says the interrupted attempt reached,
+    minus where this one starts: the checkpoint, or the first draw when
+    no save was made yet. With neither a checkpoint nor any recorded
+    progress, nothing was interrupted, and nothing is logged.
     """
     directory = Path(directory)
-    at = {"draws": saved.draws, "updates": saved.updates}
     progress = directory / PROGRESS
+    if saved is None and not progress.exists():
+        return None
+    at = ({"draws": saved.draws, "updates": saved.updates}
+          if saved is not None else {"draws": 0, "updates": 0})
     reached = json.loads(progress.read_text()) if progress.exists() else at
     lost = {key: reached[key] - at[key] for key in at}
     entry = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"),

@@ -279,3 +279,18 @@ class TestLostWork:
         assert len(entries) == 1
         assert entries[0]["lost"] == {"draws": 3, "updates": 1}
         assert entries[0]["resumed_at"] == {"draws": 2, "updates": 1}
+
+    def test_a_restart_before_any_save_counts_from_the_first_draw(
+            self, tmp_path):
+        """Found in review: an eviction before the first save left no
+        checkpoint, so nothing was logged and its cost went unmeasured."""
+        (tmp_path / PROGRESS).write_text(
+            json.dumps({"draws": 4, "updates": 3}))
+        line = log_resume(tmp_path, None)
+        assert line == "resuming at draw 0, update 0 (lost 4 draws, 3 updates)"
+        entry = json.loads((tmp_path / RESUMES).read_text())
+        assert entry["lost"] == {"draws": 4, "updates": 3}
+
+    def test_a_fresh_start_logs_nothing(self, tmp_path):
+        assert log_resume(tmp_path, None) is None
+        assert not (tmp_path / RESUMES).exists()
