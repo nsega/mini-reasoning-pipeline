@@ -648,6 +648,31 @@ class TestResumeAfterAKill:
         run(args, load_model=loader, sampler=canned, rollout=forbidden)
         assert records(args) == before
 
+    def test_a_resume_that_fails_to_load_is_not_logged(self, tmp_path):
+        """Found in review: the resume line was written before the state
+        loaded, so a pod crash-looping on a broken checkpoint logged a
+        resume on every attempt and inflated the lost-work count."""
+        args = run_dir(tmp_path, "run", **{"--steps": 4,
+                                           "--checkpoint-every": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(4))
+        ckpt = Path(args.checkpoint_dir)
+        latest = (ckpt / "LATEST").read_text().strip()
+        (ckpt / latest / "optimizer.pt").unlink()
+        with pytest.raises(FileNotFoundError):
+            run(args, load_model=loader, sampler=canned,
+                rollout=canned_rollout)
+        assert not (ckpt / "resumes.jsonl").exists()
+
+    def test_a_finished_run_started_again_logs_no_resume(self, tmp_path):
+        """A finished run resumes nothing, so it adds nothing to the
+        lost-work log."""
+        args = run_dir(tmp_path, "run", **{"--steps": 3})
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        assert not (Path(args.checkpoint_dir) / "resumes.jsonl").exists()
+
     def test_a_checkpoint_from_another_run_is_refused_before_loading(
             self, tmp_path):
         args = run_dir(tmp_path, "run", **{"--steps": 4,

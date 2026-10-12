@@ -436,8 +436,11 @@ def training_stage(args, model, tokenizer, pool, held_out, *,
     resume = writer = None
     if args.checkpoint_dir is not None:
         if saved is not None:
-            print(checkpoint.log_resume(args.checkpoint_dir, saved))
             resume = checkpoint.resume_from(saved, model)
+            # Logged once the state has loaded, so a resume that fails
+            # leaves no record, and only when training has work left.
+            if not saved.complete:
+                print(checkpoint.log_resume(args.checkpoint_dir, saved))
         writer = checkpoint.Writer(args.checkpoint_dir, model, identity)
     history = trainer.train(model, tokenizer, pool, steps=args.steps,
                             rollout=rollout, group_size=args.n_samples,
