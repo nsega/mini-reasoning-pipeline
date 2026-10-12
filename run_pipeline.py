@@ -409,15 +409,20 @@ def baseline_stage(args, model, tokenizer, problems, scorer,
     """The baseline eval, or the stored one where it may stand in.
 
     It is reused when --reuse-baseline asks, when --stage validate needs
-    the before half for its report, and when a checkpointed full run
-    finds one stored. The eval is deterministic in its seed, so a
-    requeued run that reuses it loses only the hour it would cost again.
+    the before half for its report, and when a checkpointed full run is
+    resuming: its checkpoint directory shows training began there, which
+    happens only after the run wrote its baseline. The eval is
+    deterministic in its seed, so a requeued run that reuses it loses
+    only the hour it would cost again. A fresh run recomputes, even when
+    an earlier run left a baseline.json in --out-dir. Every reuse says
+    so.
     """
     stored = Path(args.out_dir) / "baseline.json"
-    reuse = (args.reuse_baseline or args.stage == "validate"
-             or (args.stage == "all" and args.checkpoint_dir is not None
-                 and stored.exists()))
-    if reuse:
+    resuming = (args.stage == "all" and args.checkpoint_dir is not None
+                and checkpoint.started(args.checkpoint_dir)
+                and stored.exists())
+    if args.reuse_baseline or args.stage == "validate" or resuming:
+        print(f"reusing the stored baseline in {stored}")
         return load_baseline(args.out_dir, problems, evaluation.provenance(
             model, seed=args.seed, n_samples=args.n_samples,
             fallback=EVAL_FALLBACK))
@@ -446,6 +451,10 @@ def training_stage(args, model, tokenizer, pool, held_out, *,
             if not saved.complete:
                 print(checkpoint.log_resume(args.checkpoint_dir, saved))
         writer = checkpoint.Writer(args.checkpoint_dir, model, identity)
+        if saved is None:
+            # Marks the start, so a requeue before the first draw ends
+            # still finds training began and reuses the baseline.
+            writer.progress(0, 0)
     history = trainer.train(model, tokenizer, pool, steps=args.steps,
                             rollout=rollout, group_size=args.n_samples,
                             lr=args.lr, max_draws=args.max_draws,

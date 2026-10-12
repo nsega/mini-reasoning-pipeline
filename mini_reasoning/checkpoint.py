@@ -181,6 +181,16 @@ class Writer:
                 shutil.rmtree(old)
 
 
+def started(directory) -> bool:
+    """Whether training began in this checkpoint directory.
+
+    A save exists, or progress was recorded, which a run does as soon as
+    its training starts. Either comes after that run's baseline eval.
+    """
+    directory = Path(directory)
+    return (directory / LATEST).exists() or (directory / PROGRESS).exists()
+
+
 def read_latest(directory, identity: Mapping) -> Saved | None:
     """The checkpoint LATEST names, checked against this run.
 

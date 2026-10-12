@@ -693,6 +693,33 @@ class TestResumeAfterAKill:
         run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
         assert not (Path(args.checkpoint_dir) / "resumes.jsonl").exists()
 
+    def test_a_fresh_run_recomputes_a_baseline_it_finds(self, tmp_path):
+        """Found in review: reuse fired whenever baseline.json existed, so
+        a fresh run with a new checkpoint directory took an earlier run's
+        baseline without a word. Only a run that started training in its
+        checkpoint directory reuses one."""
+        args = run_dir(tmp_path, "run", **{"--steps": 2})
+        run(args_for(tmp_path / "run", **{"--skip-training": True}),
+            load_model=loader, sampler=canned)
+        calls = []
+
+        def counting(model, tokenizer, problem, n):
+            calls.append(problem)
+            return canned(model, tokenizer, problem, n)
+
+        run(args, load_model=loader, sampler=counting,
+            rollout=canned_rollout)
+        assert len(calls) == 4  # the baseline eval again, then validation
+
+    def test_a_reused_baseline_is_announced(self, tmp_path, capsys):
+        args = run_dir(tmp_path, "run", **{"--steps": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(0))
+        capsys.readouterr()
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        assert "reusing the stored baseline" in capsys.readouterr().out
+
     def test_a_checkpoint_from_another_run_is_refused_before_loading(
             self, tmp_path):
         args = run_dir(tmp_path, "run", **{"--steps": 4,

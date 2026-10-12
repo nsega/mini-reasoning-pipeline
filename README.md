@@ -172,7 +172,10 @@ A resumed run writes the same records as one never interrupted. Each
 training draw reseeds from its own index, so a draw replayed after a
 resume repeats the one the killed process made, and a save holds what
 no seed can rebuild: the weights, Adam's state and the loop's place in
-the pool. Checkpointing is off unless the flag is given, and
+the pool. Once its training has begun, a run started again also
+reuses the baseline it already wrote, and says so. A fresh run
+recomputes the baseline even when `--out-dir` holds an earlier one.
+Checkpointing is off unless the flag is given, and
 `--checkpoint-every` sets the cadence. A save of the default model is
 about 7.2 GB, and two exist while one is written, so the directory
 needs about 15 GB free. A fresh run needs a fresh directory: one that
