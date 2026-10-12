@@ -181,7 +181,9 @@ class Writer:
             _sync(item)
         replace_text(latest, name + "\n")
         for old in self.directory.glob(PREFIX + "*"):
-            if old.name != name:
+            # Checkpoints are directories. Anything else named like one
+            # is not this module's to delete.
+            if old.name != name and old.is_dir():
                 shutil.rmtree(old)
 
 

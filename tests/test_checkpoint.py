@@ -154,6 +154,15 @@ class TestAtomicity:
         monkeypatch.undo()
         assert read_latest(tmp_path, IDENTITY_VALUES).path.name == "draw-0001"
 
+    def test_pruning_leaves_files_alone(self, tmp_path):
+        """Found in review: pruning removed anything named draw-*, and a
+        stray file of that name made every save crash after LATEST had
+        moved. Only checkpoint directories are pruned."""
+        (tmp_path / "draw-notes.txt").write_text("kept")
+        saved_run(tmp_path)
+        assert (tmp_path / "draw-notes.txt").read_text() == "kept"
+        assert read_latest(tmp_path, IDENTITY_VALUES) is not None
+
     def test_saving_over_the_current_checkpoint_is_refused(self, tmp_path):
         model = policy()
         optimizer = stepped_adam(model)
