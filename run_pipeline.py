@@ -423,10 +423,13 @@ def baseline_stage(args, model, tokenizer, problems, scorer,
                 and checkpoint.started(args.checkpoint_dir)
                 and stored.exists())
     if args.reuse_baseline or args.stage == "validate" or resuming:
-        print(f"reusing the stored baseline in {stored}")
-        return load_baseline(args.out_dir, problems, evaluation.provenance(
+        baseline = load_baseline(args.out_dir, problems, evaluation.provenance(
             model, seed=args.seed, n_samples=args.n_samples,
             fallback=EVAL_FALLBACK))
+        # Said once the checks pass, so a refused baseline is never
+        # reported as reused.
+        print(f"reusing the stored baseline in {stored}")
+        return baseline
     baseline = evaluation.evaluate(model, tokenizer, problems, scorer,
                                    **eval_args)
     write_results(args.out_dir, "baseline", baseline)
@@ -447,6 +450,12 @@ def training_stage(args, model, tokenizer, pool, held_out, *,
     if args.checkpoint_dir is not None:
         if saved is not None:
             resume = checkpoint.resume_from(saved, model)
+            if saved.complete:
+                # Said aloud, since records rewritten from a finished run
+                # would otherwise pass for a run that trained.
+                print(f"training already finished in {args.checkpoint_dir} "
+                      f"at draw {saved.draws}, update {saved.updates}: "
+                      "reusing its weights")
         # Logged once the state has loaded, so a resume that fails leaves
         # no record, and only when training has work left. A restart
         # before the first save is logged too, counted from draw 0.

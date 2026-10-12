@@ -773,6 +773,35 @@ class TestResumeAfterAKill:
         lost = [json.loads(row)["lost"] for row in log.read_text().splitlines()]
         assert lost == [{"draws": 1, "updates": 1}, {"draws": 0, "updates": 0}]
 
+    def test_a_finished_checkpoint_is_announced(self, tmp_path, capsys):
+        """Found in review: a run that found a finished checkpoint skipped
+        training without a word, so a candidate pointed at the reference
+        run's directory would write the reference's records and pass a
+        comparison it never trained for."""
+        args = run_dir(tmp_path, "run", **{"--steps": 3})
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        capsys.readouterr()
+        run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
+        assert "training already finished" in capsys.readouterr().out
+
+    def test_a_refused_baseline_is_not_announced_as_reused(
+            self, tmp_path, capsys):
+        """Found in review: the reuse line printed before the checks ran,
+        so a refused baseline was first reported as reused."""
+        args = run_dir(tmp_path, "run", **{"--steps": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(0))
+        stored = Path(args.out_dir) / "baseline.json"
+        written = json.loads(stored.read_text())
+        written["provenance"]["dtype"] = "torch.bfloat16"
+        stored.write_text(json.dumps(written))
+        capsys.readouterr()
+        with pytest.raises(ValueError, match="dtype"):
+            run(args, load_model=loader, sampler=canned,
+                rollout=canned_rollout)
+        assert "reusing the stored baseline" not in capsys.readouterr().out
+
     def test_a_checkpoint_from_another_run_is_refused_before_loading(
             self, tmp_path):
         args = run_dir(tmp_path, "run", **{"--steps": 4,
