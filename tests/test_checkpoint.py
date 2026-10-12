@@ -20,8 +20,9 @@ from torch import nn
 from mini_reasoning import checkpoint
 from mini_reasoning.checkpoint import (
     IDENTITY, LATEST, PROGRESS, RESUMES, Writer, load_weights, log_resume,
-    read_latest, resume_from,
+    read_latest, resume_from, version_warning,
 )
+from mini_reasoning.evaluate import library_versions
 
 VOCAB = 32
 
@@ -236,6 +237,31 @@ class TestRefusals:
         state_path.write_text(json.dumps(state))
         with pytest.raises(ValueError, match="format"):
             read_latest(tmp_path, IDENTITY_VALUES)
+
+
+class TestVersions:
+    """A checkpoint records the library versions it was saved under."""
+
+    def test_a_save_records_the_library_versions(self, tmp_path):
+        saved_run(tmp_path)
+        saved = read_latest(tmp_path, IDENTITY_VALUES)
+        assert saved.versions == library_versions()
+
+    def test_matching_versions_warn_of_nothing(self, tmp_path):
+        saved_run(tmp_path)
+        assert version_warning(read_latest(tmp_path, IDENTITY_VALUES)) is None
+
+    def test_other_versions_are_named_in_a_warning(self, tmp_path):
+        """Found in review: a requeue on a rebuilt image resumed without
+        a word, and the records it wrote then need not match."""
+        saved_run(tmp_path)
+        state_path = tmp_path / "draw-0002" / checkpoint.STATE
+        state = json.loads(state_path.read_text())
+        state["versions"]["torch"] = "0.0.1"
+        state_path.write_text(json.dumps(state))
+        warning = version_warning(read_latest(tmp_path, IDENTITY_VALUES))
+        assert "torch 0.0.1" in warning
+        assert f"torch {library_versions()['torch']}" in warning
 
 
 class TestLostWork:

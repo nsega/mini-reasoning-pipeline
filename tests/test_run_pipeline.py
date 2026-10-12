@@ -720,6 +720,27 @@ class TestResumeAfterAKill:
         run(args, load_model=loader, sampler=canned, rollout=canned_rollout)
         assert "reusing the stored baseline" in capsys.readouterr().out
 
+    def test_a_resume_under_other_versions_warns_and_goes_on(
+            self, tmp_path, capsys):
+        """Versions are warned about, never refused, as the provenance
+        stamp treats them."""
+        args = run_dir(tmp_path, "run", **{"--steps": 4,
+                                           "--checkpoint-every": 2})
+        with pytest.raises(Killed):
+            run(args, load_model=loader, sampler=canned,
+                rollout=killed_after(4))
+        ckpt = Path(args.checkpoint_dir)
+        latest = (ckpt / "LATEST").read_text().strip()
+        state_path = ckpt / latest / "state.json"
+        state = json.loads(state_path.read_text())
+        state["versions"]["transformers"] = "0.0.1"
+        state_path.write_text(json.dumps(state))
+        capsys.readouterr()
+        results = run(args, load_model=loader, sampler=canned,
+                      rollout=canned_rollout)
+        assert "transformers 0.0.1" in capsys.readouterr().err
+        assert results["training"]["updates"] == 4
+
     def test_a_checkpoint_from_another_run_is_refused_before_loading(
             self, tmp_path):
         args = run_dir(tmp_path, "run", **{"--steps": 4,

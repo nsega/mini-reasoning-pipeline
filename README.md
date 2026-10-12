@@ -175,6 +175,8 @@ no seed can rebuild: the weights, Adam's state and the loop's place in
 the pool. Once its training has begun, a run started again also
 reuses the baseline it already wrote, and says so. A fresh run
 recomputes the baseline even when `--out-dir` holds an earlier one.
+A checkpoint records the torch and transformers versions it was saved
+under, and a run started under others warns and goes on.
 Checkpointing is off unless the flag is given, and
 `--checkpoint-every` sets the cadence. A save of the default model is
 about 7.2 GB, and two exist while one is written, so the directory

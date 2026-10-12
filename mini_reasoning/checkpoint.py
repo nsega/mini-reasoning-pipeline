@@ -45,6 +45,7 @@ from pathlib import Path
 import torch
 from safetensors.torch import load_model, save_model
 
+from mini_reasoning.evaluate import library_versions
 from mini_reasoning.trainer import Resume
 
 FORMAT = 1
@@ -74,12 +75,14 @@ class Saved:
         position: The pool index the loop examines next.
         complete: True when the save was made as the loop stopped.
         dtype: The dtype of the saved weights.
+        versions: The library versions the save was made under.
     """
     path: Path
     history: list[dict]
     position: int
     complete: bool
     dtype: str
+    versions: dict
 
     @property
     def draws(self) -> int:
@@ -169,6 +172,7 @@ class Writer:
         torch.save(optimizer.state_dict(), target / OPTIMIZER)
         state = {"format": FORMAT,
                  "identity": {**self.identity, "dtype": _dtype(self.model)},
+                 "versions": library_versions(),
                  "history": history, "position": position,
                  "complete": complete}
         (target / STATE).write_text(json.dumps(state, indent=2) + "\n")
@@ -235,7 +239,26 @@ def read_latest(directory, identity: Mapping) -> Saved | None:
                 "Use a new --checkpoint-dir for this one.")
     return Saved(path=path, history=state["history"],
                  position=state["position"], complete=state["complete"],
-                 dtype=saved_identity["dtype"])
+                 dtype=saved_identity["dtype"], versions=state["versions"])
+
+
+def version_warning(saved: Saved) -> str | None:
+    """A warning naming the libraries that changed since the save, or None.
+
+    Versions are recorded and compared but never refused, as the eval's
+    provenance stamp treats them: a patch bump need not change a number,
+    but a resume under a rebuilt image is the first suspect when the
+    records stop matching.
+    """
+    current = library_versions()
+    changed = [name for name in current
+               if saved.versions.get(name) != current[name]]
+    if not changed:
+        return None
+    then = ", ".join(f"{name} {saved.versions.get(name)}" for name in changed)
+    now = ", ".join(f"{name} {current[name]}" for name in changed)
+    return (f"warning: the checkpoint was saved under {then}, and this run "
+            f"has {now}. Its records may not match an uninterrupted run's.")
 
 
 def load_weights(saved: Saved, model) -> None:

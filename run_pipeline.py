@@ -32,6 +32,7 @@ processes that hand over through --out-dir and --checkpoint-dir.
 """
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from mini_reasoning import (
@@ -507,6 +508,9 @@ def run(args, *, load_model=_load_model,
     saved = (checkpoint.read_latest(args.checkpoint_dir, identity)
              if args.checkpoint_dir is not None and args.stage != "baseline"
              else None)
+    warning = checkpoint.version_warning(saved) if saved is not None else None
+    if warning is not None:
+        print(warning, file=sys.stderr)
     if args.stage == "validate":
         check_validate_inputs(args.out_dir, saved)
 
