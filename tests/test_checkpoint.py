@@ -311,6 +311,25 @@ class TestLostWork:
         assert entries[0]["lost"] == {"draws": 3, "updates": 1}
         assert entries[0]["resumed_at"] == {"draws": 2, "updates": 1}
 
+    def test_an_interrupted_log_write_leaves_whole_lines(
+            self, tmp_path, monkeypatch):
+        """Found in review: resumes.jsonl was appended in place, so a kill
+        mid-append could leave a torn last line its readers cannot parse.
+        It is written whole or not at all, like every other file here."""
+        saved_run(tmp_path)
+        saved = read_latest(tmp_path, IDENTITY_VALUES)
+        log_resume(tmp_path, saved)
+        before = (tmp_path / RESUMES).read_text()
+
+        def killed(*args, **kwargs):
+            raise KeyboardInterrupt("killed mid-write")
+
+        monkeypatch.setattr(checkpoint.os, "replace", killed)
+        with pytest.raises(KeyboardInterrupt):
+            log_resume(tmp_path, saved)
+        monkeypatch.undo()
+        assert (tmp_path / RESUMES).read_text() == before
+
     def test_a_restart_before_any_save_counts_from_the_first_draw(
             self, tmp_path):
         """Found in review: an eviction before the first save left no

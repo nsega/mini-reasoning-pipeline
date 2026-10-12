@@ -322,8 +322,11 @@ def log_resume(directory, saved: Saved | None) -> str | None:
     lost = {key: reached[key] - at[key] for key in at}
     entry = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
              "resumed_at": at, "reached": reached, "lost": lost}
-    with open(directory / RESUMES, "a") as log:
-        log.write(json.dumps(entry) + "\n")
+    # Rewritten whole rather than appended, so a kill mid-write leaves
+    # the earlier lines and never a torn last one.
+    log = directory / RESUMES
+    earlier = log.read_text() if log.exists() else ""
+    replace_text(log, earlier + json.dumps(entry) + "\n")
     return (f"resuming at draw {at['draws']}, update {at['updates']} "
             f"(lost {_count(lost['draws'], 'draw')}, "
             f"{_count(lost['updates'], 'update')})")
