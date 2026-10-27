@@ -472,3 +472,57 @@ class TestProvenance:
         got = provenance(object(), seed=1, n_samples=2, fallback=None)
         assert got["torch"] == torch.__version__
         assert "transformers" in got
+
+
+CPU_PROVENANCE_KEYS = {"model", "dtype", "seed", "n_samples", "fallback",
+                       "torch", "transformers"}
+
+
+class FakeCudaModel:
+    """Stands in for a model on a GPU: no machine here has one.
+
+    Its parameters report a CUDA device, which is all provenance reads.
+    """
+
+    def parameters(self):
+        yield SimpleNamespace(device=torch.device("cuda", 0),
+                              dtype=torch.float32)
+
+
+def on_an_l4(monkeypatch, deterministic=True):
+    monkeypatch.setattr(torch.cuda, "get_device_name",
+                        lambda device=None: "NVIDIA L4")
+    monkeypatch.setattr(torch.version, "cuda", "13.0")
+    monkeypatch.setattr(torch, "are_deterministic_algorithms_enabled",
+                        lambda: deterministic)
+
+
+class TestProvenanceDevice:
+    """A CPU stamp is exactly what it was before CUDA support, and a CUDA
+    stamp adds the fields that tell its records apart."""
+
+    def test_provenance_on_cpu_has_exactly_todays_keys(self):
+        got = provenance(torch.nn.Linear(2, 2), seed=42, n_samples=7,
+                         fallback="number")
+        assert set(got) == CPU_PROVENANCE_KEYS
+
+    def test_provenance_on_a_model_without_parameters_is_cpu(self):
+        got = provenance(object(), seed=42, n_samples=7, fallback="number")
+        assert set(got) == CPU_PROVENANCE_KEYS
+
+    def test_provenance_on_cuda_adds_the_device_fields(self, monkeypatch):
+        on_an_l4(monkeypatch, deterministic=True)
+        got = provenance(FakeCudaModel(), seed=42, n_samples=7,
+                         fallback="number")
+        assert got["device"] == "cuda"
+        assert got["deterministic"] is True
+        assert got["gpu"] == "NVIDIA L4"
+        assert got["cuda"] == "13.0"
+        assert CPU_PROVENANCE_KEYS <= set(got)
+
+    def test_provenance_on_cuda_records_the_fast_mode_too(self, monkeypatch):
+        on_an_l4(monkeypatch, deterministic=False)
+        got = provenance(FakeCudaModel(), seed=42, n_samples=7,
+                         fallback="number")
+        assert got["deterministic"] is False
+

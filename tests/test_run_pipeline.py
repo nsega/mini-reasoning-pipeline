@@ -22,8 +22,8 @@ from mini_reasoning.scorers import (
 )
 from mini_reasoning.trainer import Rollouts
 from run_pipeline import (
-    build_parser, build_scorer, load_problems, run, split_held_out,
-    vote_accuracy, write_results,
+    build_parser, build_scorer, load_baseline, load_problems, run,
+    run_identity, split_held_out, vote_accuracy, write_results,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -314,6 +314,75 @@ class TestReusedBaselineProvenance:
                                      "--reuse-baseline": True})
         with pytest.raises(ValueError, match="no provenance"):
             run(args, load_model=loader, sampler=canned)
+
+
+class TestReuseAcrossDevices:
+    """A baseline is a before half only for the device and mode that drew
+    it. A missing device means CPU, so old CPU baselines still fit."""
+
+    STAMP = {"model": "m", "dtype": "torch.float32", "seed": 1,
+             "n_samples": 3, "fallback": "number"}
+
+    def stored(self, tmp_path, stamp):
+        baseline = {"records": [{"unique_id": p["unique_id"],
+                                 "samples": [1, 2, 3]} for p in (P1, P2)],
+                    "provenance": stamp}
+        (tmp_path / "baseline.json").write_text(json.dumps(baseline))
+
+    def test_reuse_refuses_a_baseline_from_another_device(self, tmp_path):
+        self.stored(tmp_path, self.STAMP)
+        expected = dict(self.STAMP, device="cuda", deterministic=False)
+        with pytest.raises(ValueError) as raised:
+            load_baseline(tmp_path, [P1, P2], expected)
+        assert "device=None" in str(raised.value)
+        assert "device='cuda'" in str(raised.value)
+
+    def test_reuse_refuses_a_baseline_from_the_other_mode(self, tmp_path):
+        self.stored(tmp_path, dict(self.STAMP, device="cuda",
+                                   deterministic=False, gpu="NVIDIA L4",
+                                   cuda="13.0"))
+        expected = dict(self.STAMP, device="cuda", deterministic=True,
+                        gpu="NVIDIA L4", cuda="13.0")
+        with pytest.raises(ValueError, match="deterministic"):
+            load_baseline(tmp_path, [P1, P2], expected)
+
+    def test_reuse_does_not_compare_the_gpu_or_the_cuda_version(
+            self, tmp_path):
+        self.stored(tmp_path, dict(self.STAMP, device="cuda",
+                                   deterministic=True, gpu="NVIDIA L4",
+                                   cuda="13.0"))
+        expected = dict(self.STAMP, device="cuda", deterministic=True,
+                        gpu="NVIDIA A100", cuda="12.8")
+        assert load_baseline(tmp_path, [P1, P2], expected)
+
+    def test_an_old_cpu_baseline_still_fits_a_cpu_run(self, tmp_path):
+        self.stored(tmp_path, self.STAMP)
+        assert load_baseline(tmp_path, [P1, P2], dict(self.STAMP))
+
+
+CPU_IDENTITY_KEYS = {"model", "seed", "steps", "max_draws", "group_size",
+                     "lr", "pool"}
+
+
+class TestRunIdentity:
+    """A CPU run's identity is what it was before CUDA support."""
+
+    def test_run_identity_on_cpu_has_exactly_todays_keys(self, tmp_path):
+        args = args_for(tmp_path)
+        assert set(run_identity(args, [P1, P2], 42)) == CPU_IDENTITY_KEYS
+
+    def test_run_identity_on_cuda_adds_the_device_and_the_mode(
+            self, tmp_path):
+        args = args_for(tmp_path)
+        args.device, args.deterministic = "cuda", True
+        got = run_identity(args, [P1, P2], 42)
+        assert got["device"] == "cuda" and got["deterministic"] is True
+        assert CPU_IDENTITY_KEYS <= set(got)
+
+    def test_run_identity_on_cuda_records_the_fast_mode(self, tmp_path):
+        args = args_for(tmp_path)
+        args.device, args.deterministic = "cuda", False
+        assert run_identity(args, [P1, P2], 42)["deterministic"] is False
 
 
 class TestCli:

@@ -91,6 +91,24 @@ class TestRoundTrip:
         assert saved.draws == 2 and saved.updates == 1
         assert saved.complete is False
 
+    def test_resume_loads_adam_state_onto_the_models_device(
+            self, tmp_path, monkeypatch):
+        """A save made on CUDA holds CUDA tensors, so torch.load needs
+        the run's device or a CPU resume cannot read it."""
+        saved_run(tmp_path)
+        saved = read_latest(tmp_path, IDENTITY_VALUES)
+        seen = {}
+        real_load = torch.load
+
+        def recording_load(*args, **kwargs):
+            seen.update(kwargs)
+            return real_load(*args, **kwargs)
+
+        monkeypatch.setattr(checkpoint.torch, "load", recording_load)
+        fresh = policy(seed=1)
+        resume_from(saved, fresh)
+        assert seen["map_location"] == next(fresh.parameters()).device
+
     def test_tied_weights_are_stored_once_and_load_still_tied(self, tmp_path):
         """Qwen3 ties its embedding to its output head. A copy that untied
         them would train the two apart after the resume."""
@@ -244,6 +262,30 @@ class TestRefusals:
                      **{field: ["p9"] if field == "pool" else "other"})
         with pytest.raises(ValueError, match=field):
             read_latest(tmp_path, other)
+
+    def test_resume_refuses_a_checkpoint_from_the_other_mode(self, tmp_path):
+        """A fast run and a deterministic run draw differently, so a
+        checkpoint from one is not the other's to resume."""
+        fast = dict(IDENTITY_VALUES, device="cuda", deterministic=False)
+        model = policy()
+        Writer(tmp_path, model, fast).save(
+            stepped_adam(model), HISTORY, position=2, complete=False)
+        with pytest.raises(ValueError, match="deterministic"):
+            read_latest(tmp_path, dict(fast, deterministic=True))
+
+    def test_resume_refuses_a_checkpoint_from_the_other_device(
+            self, tmp_path):
+        saved_run(tmp_path)
+        with pytest.raises(ValueError, match="device"):
+            read_latest(tmp_path, dict(IDENTITY_VALUES, device="cuda",
+                                       deterministic=False))
+
+    def test_a_checkpoint_without_the_fields_is_a_cpu_one(self, tmp_path):
+        """Checkpoints written before CUDA support carry neither field,
+        and a CPU run's identity carries neither, so they still match."""
+        saved_run(tmp_path)
+        assert "device" not in IDENTITY_VALUES
+        assert read_latest(tmp_path, IDENTITY_VALUES) is not None
 
     def test_another_dtype_is_refused_at_load(self, tmp_path):
         """The copy would cast float32 weights silently into the wrong

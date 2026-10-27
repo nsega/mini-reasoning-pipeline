@@ -60,8 +60,10 @@ OPTIMIZER = "optimizer.pt"
 STATE = "state.json"
 # Compared before the model loads. dtype is compared after, against the
 # loaded model itself, since only the model can say what it holds.
+# device and deterministic are absent from a CPU run's identity and compared
+# with .get, so a checkpoint saved before CUDA support still matches a CPU run.
 IDENTITY = ("model", "seed", "steps", "max_draws", "group_size", "lr",
-            "pool")
+            "pool", "device", "deterministic")
 # What a volume that cannot sync a directory answers. ENOTSUP and
 # EOPNOTSUPP are one value on Linux and two on macOS.
 UNSYNCABLE_DIRECTORY = {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
@@ -293,9 +295,25 @@ def load_weights(saved: Saved, model) -> None:
 
 def resume_from(saved: Saved, model) -> Resume:
     """Loads the saved weights into model and returns where training
-    picks up, optimizer state included."""
+    picks up, optimizer state included.
+
+    Adam's state loads onto the model's own device, since a checkpoint
+    saved on CUDA holds CUDA tensors that a CPU resume could not place.
+
+    Args:
+        saved: The checkpoint read_latest found.
+        model: The policy, already on the run's device.
+
+    Returns:
+        Where training resumes: history, position and optimizer state.
+
+    Raises:
+        ValueError: if the model's dtype is not the saved weights'.
+    """
     load_weights(saved, model)
-    optimizer_state = torch.load(saved.path / OPTIMIZER, weights_only=True)
+    device = next(iter(model.parameters())).device
+    optimizer_state = torch.load(saved.path / OPTIMIZER, weights_only=True,
+                                 map_location=device)
     return Resume(history=saved.history, position=saved.position,
                   optimizer_state=optimizer_state)
 

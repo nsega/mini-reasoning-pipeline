@@ -266,6 +266,15 @@ def _model_dtype(model) -> str | None:
     return str(first.dtype) if first is not None else None
 
 
+def _model_device(model) -> str | None:
+    """The device type of the policy's first parameter, where it has one."""
+    try:
+        first = next(iter(model.parameters()), None)
+    except (AttributeError, TypeError):
+        return None
+    return first.device.type if first is not None else None
+
+
 def _package_version(name: str) -> str | None:
     """The installed version, or None where the package is absent."""
     try:
@@ -297,6 +306,14 @@ def provenance(model, *, seed, n_samples, fallback) -> dict:
     records unreusable in practice, but whoever has to explain a strange
     result wants to know them.
 
+    A CUDA model adds four fields. ``device`` and ``deterministic`` are
+    identity, compared by the reuse check, so a CUDA run never reuses a
+    CPU baseline and a deterministic run never reuses a fast one. ``gpu``
+    and ``cuda`` are recorded like the library versions and compared by
+    nothing here. A CPU model adds none of them, and a stamp without a
+    ``device`` means CPU, so CPU records stay byte-identical to those
+    written before CUDA support.
+
     Args:
         model: The policy. It may be anything the sampler accepts; one
             that cannot say what it is records None rather than raising,
@@ -308,7 +325,7 @@ def provenance(model, *, seed, n_samples, fallback) -> dict:
     Returns:
         The stamp, JSON-serialisable throughout.
     """
-    return {
+    stamp = {
         "model": _model_name(model),
         "dtype": _model_dtype(model),
         "seed": seed,
@@ -316,6 +333,14 @@ def provenance(model, *, seed, n_samples, fallback) -> dict:
         "fallback": fallback,
         **library_versions(),
     }
+    if _model_device(model) == "cuda":
+        stamp.update({
+            "device": "cuda",
+            "deterministic": torch.are_deterministic_algorithms_enabled(),
+            "gpu": torch.cuda.get_device_name(),
+            "cuda": torch.version.cuda,
+        })
+    return stamp
 
 
 def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,

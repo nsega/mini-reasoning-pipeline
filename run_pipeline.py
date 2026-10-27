@@ -199,7 +199,11 @@ def load_problems(path) -> list[dict]:
     return problems
 
 
-COMPARED = ("model", "dtype", "seed", "n_samples", "fallback")
+# device and deterministic are absent from a CPU stamp, and a missing
+# device means CPU, so compared with .get they match across old and new
+# CPU records.
+COMPARED = ("model", "dtype", "seed", "n_samples", "fallback", "device",
+            "deterministic")
 
 
 def split_held_out(problems: list[dict],
@@ -249,8 +253,10 @@ def load_baseline(out_dir, problems, expected: dict) -> dict:
         out_dir: Where write_results put it.
         problems: The problems this run is about to grade.
         expected: This run's stamp, from evaluate.provenance. The
-            fields in COMPARED must match; the library versions are
-            recorded on both sides and compared on neither.
+            fields in COMPARED must match, a missing device and mode
+            reading as CPU on both sides; the library versions, the GPU
+            name and the CUDA version are recorded on both sides and
+            compared on none.
 
     Returns:
         The stored baseline results, shaped as evaluate returned them.
@@ -364,12 +370,30 @@ def run_identity(args, pool: list[dict], training_seed: int) -> dict:
     the draws. A checkpoint that differs in any of them was made by
     another run. The weights' dtype is checked when they load, against
     the loaded model.
+
+    A CUDA run adds its device and mode, since a CPU run, a fast run
+    and a deterministic run each draw differently. A CPU run adds
+    neither, so its identity, and any checkpoint saved before CUDA
+    support, is unchanged.
+
+    Args:
+        args: The parsed arguments. ``device`` and ``deterministic``
+            default to CPU and fast where the parser has no such flag.
+        pool: The problems training may draw.
+        training_seed: The seed training draws from.
+
+    Returns:
+        The identity, JSON-serialisable throughout.
     """
-    return {"model": args.model, "seed": training_seed,
-            "steps": args.steps,
-            "max_draws": trainer.draw_cap(args.steps, args.max_draws),
-            "group_size": args.n_samples, "lr": args.lr,
-            "pool": [p["unique_id"] for p in pool]}
+    identity = {"model": args.model, "seed": training_seed,
+                "steps": args.steps,
+                "max_draws": trainer.draw_cap(args.steps, args.max_draws),
+                "group_size": args.n_samples, "lr": args.lr,
+                "pool": [p["unique_id"] for p in pool]}
+    if getattr(args, "device", "cpu") == "cuda":
+        identity["device"] = "cuda"
+        identity["deterministic"] = getattr(args, "deterministic", False)
+    return identity
 
 
 def check_validate_inputs(out_dir, saved) -> None:
