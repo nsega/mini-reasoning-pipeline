@@ -29,8 +29,19 @@ same command started again resumes from the latest save, because a
 requeued pod cannot change its own arguments. --stage runs one stage of
 the three alone, so baseline, training and validation can be separate
 processes that hand over through --out-dir and --checkpoint-dir.
+
+The run is on CPU unless it passes --device cuda, and a CPU run makes the
+same calls it always did. --device cuda stops before the model loads on a
+machine with no GPU, and it never falls back to CPU. The model loads in
+float32 on CPU and moves to CUDA once loaded. --deterministic needs
+--device cuda, since a CPU run is already deterministic. It switches
+PyTorch to deterministic kernels before the first CUDA call and gives
+sampling a chain that CUDA's deterministic mode allows. Both flags are
+part of a run's identity, so a baseline or a checkpoint from the other
+device or the other mode is refused.
 """
 import argparse
+import functools
 import json
 import sys
 from pathlib import Path
@@ -39,9 +50,11 @@ from mini_reasoning import (
     checkpoint, consistency, evaluate as evaluation, report, scorers,
     trainer,
 )
+from mini_reasoning.device import configure_deterministic, require_cuda
 
 EVAL_FALLBACK = "number"
 STAGES = ("all", "baseline", "train", "validate")
+DEVICES = ("cpu", "cuda")
 CHECKPOINT_EVERY = 5
 
 
@@ -96,7 +109,8 @@ def check_flags(parser: argparse.ArgumentParser,
     --skip-training is --stage baseline under the name the README
     documents. --checkpoint-every means nothing without
     --checkpoint-dir, and the train and validate stages hand the trained
-    weights over through one, so each needs it.
+    weights over through one, so each needs it. --deterministic needs
+    --device cuda, because a CPU run is already deterministic.
 
     Raises:
         SystemExit: through parser.error, for a combination that cannot
@@ -113,6 +127,9 @@ def check_flags(parser: argparse.ArgumentParser,
         parser.error(f"--stage {args.stage} needs --checkpoint-dir: the "
                      "train stage leaves its final weights there for the "
                      "validate stage")
+    if args.deterministic and args.device != "cuda":
+        parser.error("--deterministic needs --device cuda: a CPU run is "
+                     "already deterministic")
     if args.checkpoint_every is None:
         args.checkpoint_every = CHECKPOINT_EVERY
 
@@ -166,6 +183,14 @@ def build_parser() -> argparse.ArgumentParser:
                              "stored provenance is checked against this "
                              "run, so a baseline from another model, "
                              "dtype or seed is refused")
+    parser.add_argument("--device", choices=DEVICES, default="cpu",
+                        help="cpu, the default, or cuda. cuda stops "
+                             "before the model loads when there is no "
+                             "GPU, and never falls back to CPU")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="make a CUDA run reproduce itself, at some "
+                             "cost in speed. Needs --device cuda: a CPU "
+                             "run is already deterministic")
     parser.add_argument("--out-dir", default="results")
     return parser
 
@@ -515,7 +540,8 @@ def run(args, *, load_model=_load_model,
 
     Everything that can refuse the run is checked before the model
     loads: the split, a checkpoint's identity, and what --stage validate
-    needs.
+    needs. On the CUDA path the determinism switches come next, then the
+    GPU check, then the load, and the model moves to CUDA right after it.
 
     Args:
         args: Parsed arguments from build_parser.
@@ -532,6 +558,7 @@ def run(args, *, load_model=_load_model,
         ValueError: from the split, from a checkpoint made by another
             run, or from check_validate_inputs.
         FileNotFoundError: from check_validate_inputs.
+        RuntimeError: from require_cuda, when --device cuda finds no GPU.
     """
     problems = load_problems(args.subset)
     # The split only concerns training, so an eval-only run skips it; a
@@ -554,7 +581,18 @@ def run(args, *, load_model=_load_model,
     if args.stage == "validate":
         check_validate_inputs(args.out_dir, saved)
 
+    if args.deterministic:
+        configure_deterministic()
+    if args.device == "cuda":
+        require_cuda()
     model, tokenizer = load_model(args.model)
+    if args.device == "cuda":
+        # Before anything uses the model: resume_from loads Adam's state
+        # onto the device of the first parameter.
+        model = model.to("cuda")
+    if args.deterministic:
+        sampler = functools.partial(sampler, deterministic=True)
+        rollout = functools.partial(rollout, deterministic=True)
     scorer = build_scorer()
     eval_args = dict(n_samples=args.n_samples, fallback=EVAL_FALLBACK,
                      sampler=sampler, seed=args.seed)

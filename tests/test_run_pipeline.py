@@ -1001,3 +1001,137 @@ class TestValidateRefusals:
         with pytest.raises(ValueError, match="does not match"):
             run(stage_args(tmp_path, "validate", **{"--steps": 3}),
                 load_model=never_loads, sampler=canned)
+
+
+class CudaFake(TinyPolicy):
+    """A tiny policy whose .to records the device and returns itself."""
+
+    def __init__(self, moves):
+        super().__init__()
+        self.moves = moves
+
+    def to(self, device):
+        self.moves.append(device)
+        return self
+
+
+def deterministic_canned(model, tokenizer, problem, n, deterministic=False):
+    return canned(model, tokenizer, problem, n)
+
+
+def cuda_patches(monkeypatch, calls):
+    """Patches the two device hooks where run_pipeline looks them up."""
+    monkeypatch.setattr("run_pipeline.configure_deterministic",
+                        lambda: calls.append("configure"))
+    monkeypatch.setattr("run_pipeline.require_cuda",
+                        lambda: calls.append("require"))
+
+
+class TestDeviceFlags:
+    """--device and --deterministic, and the order they act in."""
+
+    def test_device_defaults_to_cpu(self):
+        args = build_parser().parse_args([])
+        assert (args.device, args.deterministic) == ("cpu", False)
+
+    def test_deterministic_needs_cuda(self, capsys):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["--deterministic"])
+        err = capsys.readouterr().err
+        assert "--device cuda" in err
+        assert "already deterministic" in err
+
+    def test_deterministic_parses_with_cuda(self):
+        args = build_parser().parse_args(
+            ["--device", "cuda", "--deterministic"])
+        assert (args.device, args.deterministic) == ("cuda", True)
+
+    def test_cuda_without_a_gpu_stops_before_the_model_loads(
+            self, tmp_path, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        with pytest.raises(RuntimeError, match="--device cuda"):
+            run(args_for(tmp_path, **{"--device": "cuda"}),
+                load_model=never_loads, sampler=canned)
+
+    def test_deterministic_configures_before_the_model_loads(
+            self, tmp_path, monkeypatch):
+        calls = []
+        cuda_patches(monkeypatch, calls)
+
+        def recording_loader(name):
+            calls.append("load")
+            return CudaFake([]), object()
+
+        run(args_for(tmp_path, **{"--device": "cuda",
+                                  "--deterministic": True,
+                                  "--stage": "baseline"}),
+            load_model=recording_loader, sampler=deterministic_canned)
+        assert calls == ["configure", "require", "load"]
+
+    def test_fast_cuda_does_not_configure_determinism(
+            self, tmp_path, monkeypatch):
+        calls = []
+        cuda_patches(monkeypatch, calls)
+        run(args_for(tmp_path, **{"--device": "cuda",
+                                  "--stage": "baseline"}),
+            load_model=lambda name: (CudaFake([]), object()),
+            sampler=canned)
+        assert calls == ["require"]
+
+    def test_the_model_moves_to_cuda_once_loaded(
+            self, tmp_path, monkeypatch):
+        cuda_patches(monkeypatch, [])
+        moves = []
+        run(args_for(tmp_path, **{"--device": "cuda",
+                                  "--stage": "baseline"}),
+            load_model=lambda name: (CudaFake(moves), object()),
+            sampler=canned)
+        assert moves == ["cuda"]
+
+    def test_deterministic_binds_the_samplers(self, tmp_path, monkeypatch):
+        cuda_patches(monkeypatch, [])
+        seen = {"sampler": [], "rollout": []}
+
+        def sampler(model, tokenizer, problem, n, deterministic=False):
+            seen["sampler"].append(deterministic)
+            return canned(model, tokenizer, problem, n)
+
+        def rollout(model, tokenizer, problem, n, deterministic=False):
+            seen["rollout"].append(deterministic)
+            return canned_rollout(model, tokenizer, problem, n)
+
+        run(args_for(tmp_path, **{"--device": "cuda", "--deterministic": True,
+                                  "--steps": 1}),
+            load_model=lambda name: (CudaFake([]), object()),
+            sampler=sampler, rollout=rollout)
+        assert seen["sampler"] and set(seen["sampler"]) == {True}
+        assert seen["rollout"] and set(seen["rollout"]) == {True}
+
+    def test_fast_cuda_leaves_the_samplers_alone(self, tmp_path, monkeypatch):
+        cuda_patches(monkeypatch, [])
+        seen = []
+
+        def sampler(model, tokenizer, problem, n, deterministic=False):
+            seen.append(deterministic)
+            return canned(model, tokenizer, problem, n)
+
+        run(args_for(tmp_path, **{"--device": "cuda",
+                                  "--stage": "baseline"}),
+            load_model=lambda name: (CudaFake([]), object()),
+            sampler=sampler)
+        assert seen and set(seen) == {False}
+
+    def test_cpu_run_calls_the_loader_with_the_name_only(self, tmp_path):
+        calls = []
+
+        class NoMove(TinyPolicy):
+            def to(self, *args, **kwargs):
+                raise AssertionError("the CPU path moved the model")
+
+        def recording_loader(*args, **kwargs):
+            calls.append((args, kwargs))
+            return NoMove(), object()
+
+        run(args_for(tmp_path, **{"--stage": "baseline"}),
+            load_model=recording_loader, sampler=canned)
+        assert calls == [(("Qwen/Qwen3-0.6B-Base",), {})]
