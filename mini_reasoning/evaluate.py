@@ -31,6 +31,7 @@ from importlib import metadata
 import torch
 
 from mini_reasoning import verifier
+from mini_reasoning.device import deterministic_sampling_kwargs
 from mini_reasoning.scorers import REJECTED, Candidate, Scorer
 
 MATH500_LEVEL_COUNTS = {1: 43, 2: 90, 3: 105, 4: 128, 5: 134}
@@ -45,7 +46,8 @@ PROMPT = ("Problem: {problem}\n"
 def sample_solutions(model, tokenizer, problem: str, n: int,
                      max_new_tokens: int = 512, temperature: float = 0.7,
                      top_p: float = 0.95,
-                     logprob_batch: int = 1) -> list[Candidate]:
+                     logprob_batch: int = 1,
+                     deterministic: bool = False) -> list[Candidate]:
     """Samples n solutions and summarises each by its mean token logprob.
 
     The prompt is plain text rather than the tokenizer's chat template:
@@ -73,6 +75,11 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
         top_p: Nucleus sampling cutoff.
         logprob_batch: Rows scored per forward pass. One keeps the peak
             at a single sequence's logits.
+        deterministic: Sample through device.deterministic_sampling_kwargs,
+            whose nucleus step runs its cumulative sum on CPU so that
+            torch.use_deterministic_algorithms(True) does not raise on
+            CUDA. False passes temperature and top_p straight to
+            generate, as CPU runs always have.
 
     Returns:
         One Candidate per sample: the decoded text, the mean logprob the
@@ -87,8 +94,13 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
     inputs = inputs.to(model.device)
     prompt_len = inputs["input_ids"].shape[1]
     with torch.no_grad():
+        if deterministic:
+            sampling = deterministic_sampling_kwargs(
+                model, temperature, top_p)
+        else:
+            sampling = {"temperature": temperature, "top_p": top_p}
         sequences = model.generate(
-            **inputs, do_sample=True, temperature=temperature, top_p=top_p,
+            **inputs, do_sample=True, **sampling,
             num_return_sequences=n, max_new_tokens=max_new_tokens,
             pad_token_id=pad_id)
         token_logprobs = _generated_token_logprobs(

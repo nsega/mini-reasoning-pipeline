@@ -8,14 +8,15 @@ warpers on CPU, where both must give the same scores.
 
 Written with Claude (AI-written); see the README's Provenance section.
 """
+import logging
 import os
 from types import SimpleNamespace
 
 import pytest
 import torch
 from transformers import (
-    LogitsProcessorList, TemperatureLogitsWarper, TopKLogitsWarper,
-    TopPLogitsWarper,
+    LogitsProcessorList, Qwen3Config, Qwen3ForCausalLM,
+    TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper,
 )
 
 from mini_reasoning import device
@@ -115,3 +116,32 @@ def test_chain_leaves_out_top_k_when_the_model_has_none(top_k):
     assert [type(p) for p in kwargs["logits_processor"]] == [
         TemperatureLogitsWarper, device.DeterministicTopP,
     ]
+
+
+def test_the_chain_reproduces_generates_own_sampling(caplog):
+    """A real generate, with and without the chain, draws the same tokens.
+
+    The tiny Qwen3 is randomly initialised from a config, so nothing is
+    downloaded. top_k is set so the chain's top-k step is exercised too.
+    """
+    torch.manual_seed(0)
+    config = Qwen3Config(
+        vocab_size=64, hidden_size=16, intermediate_size=32,
+        num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=1,
+        head_dim=8, max_position_embeddings=64)
+    model = Qwen3ForCausalLM(config).eval()
+    model.generation_config.top_k = 20
+    prompt = torch.tensor([[3, 7, 11]])
+
+    torch.manual_seed(1)
+    plain = model.generate(
+        prompt, do_sample=True, temperature=0.7, top_p=0.95,
+        max_new_tokens=8, pad_token_id=0)
+    torch.manual_seed(1)
+    with caplog.at_level(logging.WARNING):
+        chained = model.generate(
+            prompt, do_sample=True, max_new_tokens=8, pad_token_id=0,
+            **device.deterministic_sampling_kwargs(model, 0.7, 0.95))
+
+    assert torch.equal(plain, chained)
+    assert "but it was also created" not in caplog.text

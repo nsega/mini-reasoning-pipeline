@@ -12,9 +12,12 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from transformers import BatchEncoding
+
+from mini_reasoning.device import DeterministicTopP
 from mini_reasoning.evaluate import (
-    _eos_ids, evaluate, provenance, sequence_logprob_summary,
-    token_logprobs_from_logits,
+    _eos_ids, evaluate, provenance, sample_solutions,
+    sequence_logprob_summary, token_logprobs_from_logits,
 )
 from mini_reasoning.scorers import (
     REJECTED, Candidate, Composite, ParseabilityGate, VoteAgreement,
@@ -101,6 +104,68 @@ class TestSampling:
         with pytest.raises(ValueError):
             evaluate(MODEL, TOKENIZER, [P1], lenient(), n_samples=3,
                      sampler=short)
+
+
+class RecordingModel:
+    """A model whose generate records the keyword arguments it receives."""
+
+    device = torch.device("cpu")
+    generation_config = SimpleNamespace(eos_token_id=2, top_k=20)
+
+    def __init__(self):
+        self.generate_kwargs = None
+
+    def generate(self, **kwargs):
+        self.generate_kwargs = kwargs
+        return torch.tensor([[5, 6, 7, 8], [5, 6, 9, 2]])
+
+    def __call__(self, rows):
+        return SimpleNamespace(logits=torch.zeros(*rows.shape, 10))
+
+
+class StubTokenizer:
+    """Encodes every prompt as three tokens and decodes to fixed text."""
+
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(self, text, return_tensors):
+        return BatchEncoding({"input_ids": torch.tensor([[5, 6, 7]])})
+
+    def batch_decode(self, ids, skip_special_tokens):
+        return ["text"] * len(ids)
+
+
+class TestSamplerDeterminism:
+    """`deterministic` swaps the sampling arguments, and only when asked."""
+
+    def test_sample_solutions_calls_generate_as_before_by_default(self):
+        model = RecordingModel()
+        sample_solutions(model, StubTokenizer(), "p", 2)
+        kwargs = model.generate_kwargs
+        assert kwargs["temperature"] == 0.7
+        assert kwargs["top_p"] == 0.95
+        assert "logits_processor" not in kwargs
+        assert "top_k" not in kwargs
+
+    def test_sample_solutions_deterministic_passes_the_chain(self):
+        model = RecordingModel()
+        sample_solutions(model, StubTokenizer(), "p", 2, deterministic=True)
+        kwargs = model.generate_kwargs
+        assert kwargs["temperature"] == 1.0
+        assert kwargs["top_k"] == 0
+        assert kwargs["top_p"] == 1.0
+        last = kwargs["logits_processor"][-1]
+        assert isinstance(last, DeterministicTopP)
+        assert last.top_p == 0.95
+
+    def test_deterministic_chain_uses_the_given_temperature_and_top_p(self):
+        model = RecordingModel()
+        sample_solutions(model, StubTokenizer(), "p", 2, temperature=0.5,
+                         top_p=0.8, deterministic=True)
+        processors = model.generate_kwargs["logits_processor"]
+        assert processors[0].temperature == 0.5
+        assert processors[-1].top_p == 0.8
 
 
 class TestSelection:
