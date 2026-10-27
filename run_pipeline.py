@@ -50,7 +50,9 @@ from mini_reasoning import (
     checkpoint, consistency, evaluate as evaluation, report, scorers,
     trainer,
 )
-from mini_reasoning.device import configure_deterministic, require_cuda
+from mini_reasoning.device import (
+    configure_deterministic, require_cuda, shown_field,
+)
 
 EVAL_FALLBACK = "number"
 STAGES = ("all", "baseline", "train", "validate")
@@ -319,8 +321,9 @@ def load_baseline(out_dir, problems, expected: dict) -> dict:
         if stamp.get(field) != expected.get(field):
             raise ValueError(
                 f"the baseline at {path} was drawn with "
-                f"{field}={stamp.get(field)!r} and this run has "
-                f"{field}={expected.get(field)!r}, so it is a before "
+                f"{field}={shown_field(field, stamp.get(field))!r} and this "
+                f"run has {field}="
+                f"{shown_field(field, expected.get(field))!r}, so it is a before "
                 "half from another run")
     return baseline
 

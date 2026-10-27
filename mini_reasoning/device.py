@@ -31,7 +31,7 @@ import os
 
 import torch
 from transformers import (
-    LogitsProcessor, LogitsProcessorList, TemperatureLogitsWarper,
+    GenerationConfig, LogitsProcessor, LogitsProcessorList, TemperatureLogitsWarper,
     TopKLogitsWarper,
 )
 
@@ -127,13 +127,34 @@ class DeterministicTopP(LogitsProcessor):
         return scores.masked_fill(indices_to_remove, -float("inf"))
 
 
+def shown_field(field: str, value):
+    """Renders a stamp or identity field for a refusal message.
+
+    A CPU run adds no device or deterministic field, so a missing one means
+    CPU and the fast mode. The message names that, not None. Stored records
+    are unchanged.
+
+    Args:
+        field: The field's name.
+        value: The stored value, None when the field is missing.
+
+    Returns:
+        The value to show: 'cpu' for a missing device, False for a missing
+        deterministic, otherwise value itself.
+    """
+    if value is None:
+        return {"device": "cpu", "deterministic": False}.get(field, value)
+    return value
+
+
 def deterministic_sampling_kwargs(model, temperature: float,
                                   top_p: float) -> dict:
     """Builds the generate() arguments for sampling in deterministic mode.
 
     Args:
         model: The model to sample from. Its generation_config.top_k sets
-            whether the chain has a top-k step.
+            the chain's top-k step. An unset top_k takes transformers' global
+            default, as generate does, and 0 means no top-k step.
         temperature: The sampling temperature.
         top_p: The nucleus mass.
 
@@ -145,7 +166,9 @@ def deterministic_sampling_kwargs(model, temperature: float,
     """
     processors = LogitsProcessorList([TemperatureLogitsWarper(temperature)])
     top_k = model.generation_config.top_k
-    if top_k is not None and top_k != 0:
+    if top_k is None:
+        top_k = GenerationConfig._get_default_generation_params()["top_k"]
+    if top_k != 0:
         processors.append(TopKLogitsWarper(top_k))
     processors.append(DeterministicTopP(top_p))
     return {

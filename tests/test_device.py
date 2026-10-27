@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 from transformers import (
-    GenerationMixin, LogitsProcessorList, Qwen3Config, Qwen3ForCausalLM,
+    GenerationConfig, GenerationMixin, LogitsProcessorList, Qwen3Config, Qwen3ForCausalLM,
     TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper,
 )
 
@@ -109,19 +109,33 @@ def test_kwargs_switch_off_transformers_own_warpers():
     ]
 
 
-@pytest.mark.parametrize("top_k", [None, 0])
-def test_chain_leaves_out_top_k_when_the_model_has_none(top_k):
-    kwargs = device.deterministic_sampling_kwargs(fake_model(top_k=top_k), 0.7, 0.95)
+def test_unset_top_k_takes_transformers_global_default():
+    default = GenerationConfig._get_default_generation_params()["top_k"]
+    kwargs = device.deterministic_sampling_kwargs(fake_model(top_k=None), 0.7, 0.95)
+    chain = list(kwargs["logits_processor"])
+    assert [type(p) for p in chain] == [
+        TemperatureLogitsWarper, TopKLogitsWarper, device.DeterministicTopP,
+    ]
+    assert chain[1].top_k == default
+
+
+def test_zero_top_k_leaves_out_the_top_k_step():
+    kwargs = device.deterministic_sampling_kwargs(fake_model(top_k=0), 0.7, 0.95)
     assert [type(p) for p in kwargs["logits_processor"]] == [
         TemperatureLogitsWarper, device.DeterministicTopP,
     ]
 
 
-def test_the_chain_reproduces_generates_own_sampling(monkeypatch):
+@pytest.mark.parametrize("top_k", [20, None])
+def test_the_chain_reproduces_generates_own_sampling(monkeypatch, top_k):
     """A real generate, with and without the chain, draws the same tokens.
 
     The tiny Qwen3 is randomly initialised from a config, so nothing is
-    downloaded. top_k is set so the chain's top-k step is exercised too.
+    downloaded. top_k=20 exercises an explicit top-k step. top_k=None is
+    shaped like the real checkpoint's config (top_k unset, do_sample false,
+    sampling switched on by the call), so generate falls back to
+    transformers' global default of 50, and the vocabulary is larger than
+    that so top-k actually removes tokens.
     A spy on GenerationMixin._get_logits_processor records the processor
     list generate actually uses, so the test also checks that each step
     appears once: transformers must not add its own on top of the chain.
@@ -137,11 +151,12 @@ def test_the_chain_reproduces_generates_own_sampling(monkeypatch):
     monkeypatch.setattr(GenerationMixin, "_get_logits_processor", spy)
     torch.manual_seed(0)
     config = Qwen3Config(
-        vocab_size=64, hidden_size=16, intermediate_size=32,
+        vocab_size=256, hidden_size=16, intermediate_size=32,
         num_hidden_layers=2, num_attention_heads=2, num_key_value_heads=1,
         head_dim=8, max_position_embeddings=64)
     model = Qwen3ForCausalLM(config).eval()
-    model.generation_config.top_k = 20
+    model.generation_config.top_k = top_k
+    model.generation_config.do_sample = False
     prompt = torch.tensor([[3, 7, 11]])
 
     torch.manual_seed(1)
@@ -163,3 +178,11 @@ def test_the_chain_reproduces_generates_own_sampling(monkeypatch):
         TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper]
     assert chained_used == [
         TemperatureLogitsWarper, TopKLogitsWarper, device.DeterministicTopP]
+
+
+def test_shown_field_names_cpu_and_fast_mode_for_missing_fields():
+    assert device.shown_field("device", None) == "cpu"
+    assert device.shown_field("deterministic", None) is False
+    assert device.shown_field("seed", None) is None
+    assert device.shown_field("device", "cuda") == "cuda"
+    assert device.shown_field("deterministic", True) is True

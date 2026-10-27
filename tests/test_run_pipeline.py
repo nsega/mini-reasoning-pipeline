@@ -334,7 +334,7 @@ class TestReuseAcrossDevices:
         expected = dict(self.STAMP, device="cuda", deterministic=False)
         with pytest.raises(ValueError) as raised:
             load_baseline(tmp_path, [P1, P2], expected)
-        assert "device=None" in str(raised.value)
+        assert "device='cpu'" in str(raised.value)
         assert "device='cuda'" in str(raised.value)
 
     def test_reuse_refuses_a_baseline_from_the_other_mode(self, tmp_path):

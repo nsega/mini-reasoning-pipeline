@@ -47,6 +47,7 @@ from pathlib import Path
 import torch
 from safetensors.torch import load_model, save_model
 
+from mini_reasoning.device import shown_field
 from mini_reasoning.evaluate import library_versions
 from mini_reasoning.trainer import Resume
 
@@ -249,8 +250,9 @@ def read_latest(directory, identity: Mapping) -> Saved | None:
         if saved_identity.get(field) != identity.get(field):
             raise ValueError(
                 f"the checkpoint in {directory} was made with {field}="
-                f"{saved_identity.get(field)!r} and this run has {field}="
-                f"{identity.get(field)!r}, so it belongs to another run. "
+                f"{shown_field(field, saved_identity.get(field))!r} and this "
+                f"run has {field}="
+                f"{shown_field(field, identity.get(field))!r}, so it belongs to another run. "
                 "Use a new --checkpoint-dir for this one.")
     return Saved(path=path, history=state["history"],
                  position=state["position"], complete=state["complete"],
@@ -297,8 +299,10 @@ def resume_from(saved: Saved, model) -> Resume:
     """Loads the saved weights into model and returns where training
     picks up, optimizer state included.
 
-    Adam's state loads onto the model's own device, since a checkpoint
-    saved on CUDA holds CUDA tensors that a CPU resume could not place.
+    Adam's state loads with map_location="cpu", so a checkpoint saved on
+    CUDA loads anywhere. Optimizer.load_state_dict then moves the moment
+    estimates to each parameter's device and leaves step on the CPU, as in
+    a clean run.
 
     Args:
         saved: The checkpoint read_latest found.
@@ -311,9 +315,8 @@ def resume_from(saved: Saved, model) -> Resume:
         ValueError: if the model's dtype is not the saved weights'.
     """
     load_weights(saved, model)
-    device = next(iter(model.parameters())).device
     optimizer_state = torch.load(saved.path / OPTIMIZER, weights_only=True,
-                                 map_location=device)
+                                 map_location="cpu")
     return Resume(history=saved.history, position=saved.position,
                   optimizer_state=optimizer_state)
 

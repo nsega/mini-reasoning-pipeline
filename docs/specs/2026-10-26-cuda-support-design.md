@@ -71,7 +71,7 @@ A CPU run adds none of these fields. A missing `device` means CPU. That is what 
 
 The run identity a checkpoint must share with a resuming run (`run_identity`, and `checkpoint.IDENTITY`) gains `device` and `deterministic` on CUDA, under the same rule: absent on CPU. A resume refuses a checkpoint from the other device or the other mode, naming the field that differs, as it already does for a checkpoint from another run.
 
-Weights load through `safetensors.torch.load_model` into a model already on the run's device. Adam's state loads with `torch.load`, which needs `map_location` set to the run's device, since a checkpoint saved on CUDA holds CUDA tensors.
+Weights load through `safetensors.torch.load_model` into a model already on the run's device. Adam's state loads with `torch.load(..., map_location="cpu")`, so that a checkpoint saved on CUDA loads anywhere and `Optimizer.load_state_dict` moves the moment estimates to the parameters' device while `step` stays on the CPU, as in a clean run (this changed during implementation, after the final review).
 
 ### 4. README
 

@@ -91,10 +91,11 @@ class TestRoundTrip:
         assert saved.draws == 2 and saved.updates == 1
         assert saved.complete is False
 
-    def test_resume_loads_adam_state_onto_the_models_device(
+    def test_resume_loads_adam_state_with_cpu_map_location(
             self, tmp_path, monkeypatch):
-        """A save made on CUDA holds CUDA tensors, so torch.load needs
-        the run's device or a CPU resume cannot read it."""
+        """A save made on CUDA holds CUDA tensors, so torch.load maps them
+        to the CPU. load_state_dict then moves the moments to the
+        parameters' device and leaves step on the CPU, as a clean run."""
         saved_run(tmp_path)
         saved = read_latest(tmp_path, IDENTITY_VALUES)
         seen = {}
@@ -107,7 +108,7 @@ class TestRoundTrip:
         monkeypatch.setattr(checkpoint.torch, "load", recording_load)
         fresh = policy(seed=1)
         resume_from(saved, fresh)
-        assert seen["map_location"] == next(fresh.parameters()).device
+        assert seen["map_location"] == "cpu"
 
     def test_tied_weights_are_stored_once_and_load_still_tied(self, tmp_path):
         """Qwen3 ties its embedding to its output head. A copy that untied
@@ -276,9 +277,11 @@ class TestRefusals:
     def test_resume_refuses_a_checkpoint_from_the_other_device(
             self, tmp_path):
         saved_run(tmp_path)
-        with pytest.raises(ValueError, match="device"):
+        with pytest.raises(ValueError, match="device") as raised:
             read_latest(tmp_path, dict(IDENTITY_VALUES, device="cuda",
                                        deterministic=False))
+        assert "device='cpu'" in str(raised.value)
+        assert "None" not in str(raised.value)
 
     def test_a_checkpoint_without_the_fields_is_a_cpu_one(self, tmp_path):
         """Checkpoints written before CUDA support carry neither field,
