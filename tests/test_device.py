@@ -8,14 +8,13 @@ warpers on CPU, where both must give the same scores.
 
 Written with Claude (AI-written); see the README's Provenance section.
 """
-import logging
 import os
 from types import SimpleNamespace
 
 import pytest
 import torch
 from transformers import (
-    LogitsProcessorList, Qwen3Config, Qwen3ForCausalLM,
+    GenerationMixin, LogitsProcessorList, Qwen3Config, Qwen3ForCausalLM,
     TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper,
 )
 
@@ -118,12 +117,24 @@ def test_chain_leaves_out_top_k_when_the_model_has_none(top_k):
     ]
 
 
-def test_the_chain_reproduces_generates_own_sampling(caplog):
+def test_the_chain_reproduces_generates_own_sampling(monkeypatch):
     """A real generate, with and without the chain, draws the same tokens.
 
     The tiny Qwen3 is randomly initialised from a config, so nothing is
     downloaded. top_k is set so the chain's top-k step is exercised too.
+    A spy on GenerationMixin._get_logits_processor records the processor
+    list generate actually uses, so the test also checks that each step
+    appears once: transformers must not add its own on top of the chain.
     """
+    used = []
+    original = GenerationMixin._get_logits_processor
+
+    def spy(self, *args, **kwargs):
+        processors = original(self, *args, **kwargs)
+        used.append([type(p) for p in processors])
+        return processors
+
+    monkeypatch.setattr(GenerationMixin, "_get_logits_processor", spy)
     torch.manual_seed(0)
     config = Qwen3Config(
         vocab_size=64, hidden_size=16, intermediate_size=32,
@@ -138,10 +149,17 @@ def test_the_chain_reproduces_generates_own_sampling(caplog):
         prompt, do_sample=True, temperature=0.7, top_p=0.95,
         max_new_tokens=8, pad_token_id=0)
     torch.manual_seed(1)
-    with caplog.at_level(logging.WARNING):
-        chained = model.generate(
-            prompt, do_sample=True, max_new_tokens=8, pad_token_id=0,
-            **device.deterministic_sampling_kwargs(model, 0.7, 0.95))
+    chained = model.generate(
+        prompt, do_sample=True, max_new_tokens=8, pad_token_id=0,
+        **device.deterministic_sampling_kwargs(model, 0.7, 0.95))
 
     assert torch.equal(plain, chained)
-    assert "but it was also created" not in caplog.text
+
+    wanted = (TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper,
+              device.DeterministicTopP)
+    plain_used, chained_used = (
+        [t for t in types if t in wanted] for types in used)
+    assert plain_used == [
+        TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper]
+    assert chained_used == [
+        TemperatureLogitsWarper, TopKLogitsWarper, device.DeterministicTopP]
