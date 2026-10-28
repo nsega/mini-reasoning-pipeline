@@ -6,7 +6,7 @@ Status: design discussed in conversation and checked by a builder's read against
 
 The pipeline runs on CPU only. `_load_model` loads Qwen3 in float32 and never moves it to a device, so a machine with an NVIDIA GPU runs everything on its CPU. Three hours on an M4 Pro, four on kind.
 
-[kueue-training-lab](https://github.com/nsega/kueue-training-lab) needs a GPU path for its Stage 2, which runs this pipeline under Kueue on GKE with NVIDIA L4 GPUs and repeats its eviction experiment there (EXP-E). The lab judges every experiment by this repository's standard: records equal a reference's, record for record. On a GPU that holds only if the run is deterministic, which CUDA is not by default.
+kueue-training-lab needs a GPU path for its Stage 2, which runs this pipeline under Kueue on GKE with NVIDIA L4 GPUs and repeats its eviction experiment there (EXP-E). The lab judges every experiment by this repository's standard: records equal a reference's, record for record. On a GPU that holds only if the run is deterministic, which CUDA is not by default.
 
 Readers of this repository with an NVIDIA GPU want the same thing for a different reason: a run in an hour or two instead of three.
 

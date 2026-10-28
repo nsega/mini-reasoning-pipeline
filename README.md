@@ -246,9 +246,8 @@ inside one. A CUDA run's eval records add `device`, `deterministic`,
 so CPU records are unchanged. A baseline reuse or a checkpoint resume
 refuses a different device or mode, naming the setting that differs.
 
-Two kinds of numbers are to come, from
-[kueue-training-lab](https://github.com/nsega/kueue-training-lab)'s
-runs on an L4:
+Two kinds of numbers are to come, from kueue-training-lab's runs
+on an L4:
 
 - How far fast mode's accuracy figures and records sit from a
   deterministic run's. The gap covers determinism and the one replaced
