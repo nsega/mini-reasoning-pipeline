@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CUDA support plan, annotated task map</title>
+<style>
+  :root {
+    --ivory:#FAF9F5; --slate:#141413; --clay:#D97757; --oat:#E3DACC;
+    --olive:#788C5D; --rust:#B04A3F;
+    --gray-150:#F0EEE6; --gray-300:#D1CFC5; --gray-500:#87867F; --gray-700:#3D3D3A;
+    --serif: ui-serif, Georgia, "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--ivory); color: var(--slate); font-family: var(--sans); -webkit-font-smoothing: antialiased; padding: 56px 24px 96px; }
+  .sheet { max-width: 1040px; margin: 0 auto; }
+  header { margin-bottom: 32px; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--gray-500); margin-bottom: 10px; }
+  h1 { font-family: var(--serif); font-weight: 500; font-size: 34px; letter-spacing: -.01em; margin-bottom: 12px; }
+  h2 { font-family: var(--serif); font-weight: 500; font-size: 24px; margin: 48px 0 8px; }
+  .lead, .sublead { font-size: 14.5px; line-height: 1.6; color: var(--gray-700); max-width: 720px; }
+  .sublead { margin-bottom: 18px; }
+  .lead code, .sublead code, .note code { font-family: var(--mono); font-size: 13px; }
+
+  .layout { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 32px; align-items: start; }
+  @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+  .canvas { border: 1.5px solid var(--gray-300); border-radius: 14px; background: #fff; padding: 24px; overflow-x: auto; }
+  svg.flow { display: block; width: 100%; height: auto; min-width: 520px; }
+  .flow text { font-family: var(--mono); font-size: 12px; fill: var(--slate); pointer-events: none; }
+  .flow .sub { font-size: 10.5px; fill: var(--gray-500); }
+  .flow .lbl { font-size: 10px; fill: var(--gray-500); }
+  .node rect { fill: #fff; stroke: var(--gray-300); stroke-width: 1.5; }
+  .node.term rect { fill: var(--gray-150); }
+  .node.gate path { fill: #fff; stroke: var(--gray-300); stroke-width: 1.5; }
+  .node.ok rect { fill: rgba(120,140,93,.12); stroke: var(--olive); }
+  .node.lab rect, .node.lab path { stroke-dasharray: 5 4; }
+  .node { cursor: pointer; transition: transform 120ms ease; }
+  .node:hover { transform: translateY(-1px); }
+  .node.active rect, .node.active path, .node:focus-visible rect, .node:focus-visible path { stroke: var(--clay); stroke-width: 2; }
+  .node:focus { outline: none; }
+  .edge { stroke: var(--gray-500); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+  .edge.yes { stroke: var(--olive); marker-end: url(#arrow-olive); }
+  .edge.no { stroke: var(--rust); stroke-dasharray: 4 4; marker-end: url(#arrow-rust); }
+  .zone { fill: none; stroke: var(--oat); stroke-width: 1.5; stroke-dasharray: 6 4; }
+
+  aside { position: sticky; top: 24px; border: 1.5px solid var(--gray-300); border-radius: 14px; background: #fff; padding: 20px 20px 22px; }
+  aside .hint { font-size: 12px; color: var(--gray-500); margin-bottom: 14px; }
+  aside h3 { font-family: var(--serif); font-weight: 500; font-size: 19px; margin-bottom: 6px; }
+  aside .meta { font-family: var(--mono); font-size: 11px; color: var(--gray-500); margin-bottom: 14px; }
+  aside p { font-size: 13.5px; line-height: 1.6; color: var(--gray-700); margin-bottom: 12px; }
+  aside p code { font-family: var(--mono); font-size: 12px; }
+  aside pre { font-family: var(--mono); font-size: 11.5px; line-height: 1.55; background: var(--gray-150); border: 1px solid var(--gray-300); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; color: var(--slate); }
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 14px; font-size: 12px; color: var(--gray-700); }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .chip { width: 22px; height: 14px; border: 1.5px solid var(--gray-300); border-radius: 4px; background: #fff; }
+  .chip.lab { border-style: dashed; }
+  .chip.ok { background: rgba(120,140,93,.12); border-color: var(--olive); }
+  .chip.gate { transform: rotate(45deg); width: 12px; height: 12px; border-radius: 2px; }
+  .chip.line { height: 0; border: 0; border-top: 1.5px dashed var(--rust); border-radius: 0; background: none; }
+
+  .modes { display: grid; grid-template-columns: 170px repeat(3, minmax(0,1fr)); border: 1.5px solid var(--gray-300); border-radius: 14px; background: #fff; overflow: hidden; }
+  .modes > div { padding: 12px 14px; border-bottom: 1px solid var(--gray-300); font-size: 13px; line-height: 1.55; color: var(--gray-700); min-width: 0; }
+  .modes > div:nth-last-child(-n+4) { border-bottom: 0; }
+  .modes .rowh { font-family: var(--mono); font-size: 11px; color: var(--gray-500); letter-spacing: .04em; text-transform: uppercase; background: var(--gray-150); }
+  .modes .colh { font-family: var(--serif); font-size: 16px; color: var(--slate); background: var(--gray-150); }
+  .modes .colh small { display: block; font-family: var(--mono); font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+  .modes code { font-family: var(--mono); font-size: 11.5px; background: var(--gray-150); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .modes .same { color: var(--olive); }
+  .modes .new { color: var(--clay); }
+  .modes-scroll { overflow-x: auto; }
+  .modes-scroll .modes { min-width: 760px; }
+  .pill { display: inline-block; font-family: var(--mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: var(--gray-150); color: var(--gray-700); }
+  .pill.ok { background: rgba(120,140,93,.18); }
+  .pill.new { background: rgba(217,119,87,.16); }
+  .note { font-size: 12.5px; line-height: 1.6; color: var(--gray-700); margin-top: 12px; max-width: 760px; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <header>
+    <div class="eyebrow">Illustrations &amp; Diagrams · Task map · mini-reasoning-pipeline</div>
+    <h1>Opt-in CUDA support, in six tasks and a gate</h1>
+    <p class="lead">
+      The implementation plan in <code>docs/plans/2026-10-26-cuda-support.md</code>, for the design in
+      <code>docs/specs/2026-10-26-cuda-support-design.md</code>, on branch <code>cuda-support</code>. Tasks 1
+      to 6 run where no GPU exists, and the 281 existing tests stay green throughout. The merge waits for kueue-training-lab's first GKE session to run the
+      branch on an L4.
+    </p>
+  </header>
+
+  <div class="layout">
+    <div>
+      <div class="canvas">
+        <svg class="flow" viewBox="0 0 640 640" role="img" aria-label="Task dependency map from the device module to the merge gate">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#87867F"/></marker>
+            <marker id="arrow-olive" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#788C5D"/></marker>
+            <marker id="arrow-rust" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B04A3F"/></marker>
+          </defs>
+
+          <!-- zones -->
+          <rect class="zone" x="14" y="8" width="612" height="484" rx="14"/>
+          <text class="lbl" x="462" y="484">ON A MAC, NO GPU</text>
+          <rect class="zone" x="14" y="506" width="612" height="124" rx="14"/>
+          <text class="lbl" x="28" y="622">KUEUE-TRAINING-LAB, FIRST GKE SESSION, ONE L4</text>
+
+          <!-- edges -->
+          <path class="edge" d="M140,82 L140,118"/>
+          <text class="lbl" x="148" y="104">sampling chain</text>
+          <path class="edge" d="M262,70 C292,110 300,190 300,224"/>
+          <text class="lbl" x="296" y="134">checks, switches</text>
+          <path class="edge" d="M140,180 C140,210 220,214 240,224"/>
+          <path class="edge" d="M490,82 C490,170 420,200 400,224"/>
+          <text class="lbl" x="500" y="150">device fields</text>
+          <path class="edge" d="M320,288 L320,320"/>
+          <path class="edge" d="M320,384 L320,416"/>
+          <path class="edge" d="M320,478 L320,522"/>
+          <path class="edge yes" d="M402,560 L462,560"/>
+          <text class="lbl" x="412" y="550">passes</text>
+          <path class="edge no" d="M238,560 C120,560 110,460 186,448"/>
+          <text class="lbl" x="30" y="600">fails: fix on the branch</text>
+
+          <!-- nodes -->
+          <g class="node" data-k="t1" tabindex="0"><rect x="20" y="20" width="242" height="62" rx="8"/>
+            <text x="34" y="44">1 · device module</text><text class="sub" x="34" y="64">mini_reasoning/device.py</text></g>
+          <g class="node" data-k="t3" tabindex="0"><rect x="370" y="20" width="242" height="62" rx="8"/>
+            <text x="384" y="44">3 · records, checkpoints</text><text class="sub" x="384" y="64">3 files, independent of 1, 2</text></g>
+          <g class="node" data-k="t2" tabindex="0"><rect x="20" y="120" width="242" height="60" rx="8"/>
+            <text x="34" y="144">2 · samplers, rewards</text><text class="sub" x="34" y="164">evaluate.py · trainer.py</text></g>
+          <g class="node" data-k="t4" tabindex="0"><rect x="190" y="226" width="260" height="62" rx="8"/>
+            <text x="204" y="250">4 · --device, --deterministic</text><text class="sub" x="204" y="270">run_pipeline.py</text></g>
+          <g class="node" data-k="t5" tabindex="0"><rect x="190" y="322" width="260" height="62" rx="8"/>
+            <text x="204" y="346">5 · README, CPU rerun</text><text class="sub" x="204" y="366">~3 h, must match docs/runs</text></g>
+          <g class="node" data-k="t6" tabindex="0"><rect x="190" y="418" width="260" height="60" rx="8"/>
+            <text x="204" y="442">6 · draft PR, head SHA</text><text class="sub" x="204" y="462">do not merge yet</text></g>
+          <g class="node gate lab" data-k="smoke" tabindex="0"><path d="M320,524 L402,560 L320,596 L238,560 Z"/>
+            <text x="286" y="557">smoke</text><text class="sub" x="276" y="573">both modes</text></g>
+          <g class="node term ok" data-k="merge" tabindex="0"><rect x="464" y="538" width="146" height="44" rx="22"/>
+            <text x="490" y="564">merge to main</text></g>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="chip"></i> task, with its own tests and commit</span>
+        <span><i class="chip gate lab"></i> gate run by the lab on a GPU</span>
+        <span><i class="chip line"></i> a failure goes back to the branch</span>
+        <span><i class="chip ok"></i> the success path</span>
+      </div>
+    </div>
+
+    <aside>
+      <div class="hint">Click a task or the gate to see what it touches.</div>
+      <h3 id="p-title"></h3>
+      <div class="meta" id="p-meta"></div>
+      <p id="p-body"></p>
+      <pre id="p-code"></pre>
+    </aside>
+  </div>
+
+  <h2>Three ways to run, after the plan</h2>
+  <p class="sublead">
+    Everything the plan changes, seen from a run. The CPU column is the promise that nothing moves: the same
+    calls with the same arguments, the same records. Green marks what stays as today, clay what is new.
+  </p>
+  <div class="modes-scroll">
+    <div class="modes">
+      <div class="colh rowh"></div>
+      <div class="colh">CPU <small>the default, no flag</small></div>
+      <div class="colh">CUDA, fast <small><code>--device cuda</code></small></div>
+      <div class="colh">CUDA, deterministic <small><code>--device cuda --deterministic</code></small></div>
+
+      <div class="rowh">Before the model loads</div>
+      <div class="same">nothing new</div>
+      <div><span class="new">require_cuda()</span>: stop if no GPU, never fall back</div>
+      <div><span class="new">configure_deterministic()</span>, then <span class="new">require_cuda()</span></div>
+
+      <div class="rowh">Model</div>
+      <div class="same">loads in float32 on CPU, unchanged</div>
+      <div>loads on CPU, then <code>model.to("cuda")</code> in <code>run()</code></div>
+      <div>the same</div>
+
+      <div class="rowh">generate() gets</div>
+      <div class="same"><code>temperature=0.7, top_p=0.95</code>, character for character</div>
+      <div class="same">the same call, on CUDA tensors</div>
+      <div><code>temperature=1.0, top_k=0, top_p=1.0</code> plus <span class="new">a chain</span>: Temperature(0.7) → TopK(the model's, or transformers' default of 50 when unset) → DeterministicTopP(0.95)</div>
+
+      <div class="rowh">Rewards</div>
+      <div class="same">CPU, a no-op move</div>
+      <div><span class="new">stay on CPU, each advantage slice moves to the logprobs' device</span></div>
+      <div>the same</div>
+
+      <div class="rowh">provenance</div>
+      <div class="same">exactly today's keys</div>
+      <div><span class="new">+ device "cuda", deterministic false, gpu, cuda</span></div>
+      <div><span class="new">+ device "cuda", deterministic true, gpu, cuda</span></div>
+
+      <div class="rowh">Reuse and resume refuse</div>
+      <div class="same">another run, as today. Old CPU records and checkpoints still match</div>
+      <div>a CPU or deterministic baseline or checkpoint</div>
+      <div>a CPU or fast baseline or checkpoint</div>
+
+      <div class="rowh">Two runs match</div>
+      <div><span class="pill ok">record for record</span></div>
+      <div><span class="pill">close, not exact</span> gap measured by the lab</div>
+      <div><span class="pill new">record for record</span> on the same GPU type, driver, CUDA, PyTorch</div>
+
+      <div class="rowh">Its reference</div>
+      <div>docs/runs, EXP-0 (macOS), W4 (kind). All stay valid</div>
+      <div>none: the README states its measured gap</div>
+      <div>the lab's first deterministic L4 run</div>
+    </div>
+  </div>
+  <p class="note">
+    The chain is passed whole because transformers merges a custom logits processor in before its own
+    temperature, top-k and top-p steps (<code>GenerationMixin._get_logits_processor</code>). A replacement top-p
+    step alone would run on untempered logits. Switching transformers' three steps off and passing all three
+    keeps the order, and the tests prove the chain equals transformers' own on CPU.
+  </p>
+</div>
+
+<script>
+const DETAIL = {
+  t1: { title: "Task 1 · device module", meta: "create mini_reasoning/device.py · test tests/test_device.py",
+    body: "Everything CUDA-specific in one place. <code>require_cuda()</code> stops a CUDA run without a GPU. <code>configure_deterministic()</code> sets the four switches. <code>DeterministicTopP</code> mirrors transformers' top-p step but sums on CPU, where it is deterministic. <code>deterministic_sampling_kwargs</code> returns the whole chain and switches transformers' own steps off.",
+    code: "require_cuda() -> None\nconfigure_deterministic() -> None\nclass DeterministicTopP(LogitsProcessor)\ndeterministic_sampling_kwargs(model, temperature, top_p) -> dict\n\ncommit: feat(device): add CUDA checks and a\n        deterministic sampling chain" },
+  t2: { title: "Task 2 · samplers, rewards", meta: "modify evaluate.py, trainer.py · tests in test_evaluate, test_trainer",
+    body: "Both samplers gain <code>deterministic: bool = False</code>. Off, their <code>generate</code> call is unchanged character for character. On, it uses Task 1's chain. Rewards and advantages stay on CPU, and each advantage slice moves to its logprob's device just before the loss, a no-op on CPU.",
+    code: "sample_solutions(..., deterministic=False)\nsample_rollouts(..., deterministic=False)\nadvantage.to(logprob.device)\n\ncommit: feat(sampling): sample deterministically\n        on request, rewards on the model's device" },
+  t3: { title: "Task 3 · records, checkpoints", meta: "modify evaluate.py, checkpoint.py, run_pipeline.py",
+    body: "<code>provenance</code> adds <code>device</code>, <code>deterministic</code>, <code>gpu</code> and <code>cuda</code> on CUDA only. <code>COMPARED</code> and <code>IDENTITY</code> gain <code>device</code> and <code>deterministic</code>, compared with <code>.get</code>, so missing fields on CPU equal each other. Adam's state loads with <code>map_location=\"cpu\"</code>, so a resumed run keeps <code>step</code> on CPU as a clean run does (changed after the final review). Independent of Tasks 1 and 2.",
+    code: "COMPARED += (\"device\", \"deterministic\")\nIDENTITY += (\"device\", \"deterministic\")\ntorch.load(..., map_location=\"cpu\")\n\ncommit: feat(records): record the device and\n        mode, and refuse to mix them" },
+  t4: { title: "Task 4 · --device, --deterministic", meta: "modify run_pipeline.py · test test_run_pipeline.py",
+    body: "The flags, and their order in <code>run()</code>: configure, then require, then load, then move to CUDA. <code>--deterministic</code> without <code>--device cuda</code> is refused at parse time. The samplers are bound with <code>functools.partial(..., deterministic=True)</code>. The model moves in <code>run()</code>, not <code>_load_model</code>, so the tests' one-argument loaders keep working.",
+    code: "--device {cpu,cuda}   default cpu\n--deterministic       needs --device cuda\n\ncommit: feat(pipeline): add --device cuda and\n        --deterministic" },
+  t5: { title: "Task 5 · README, CPU rerun", meta: "modify README.md · about 3 hours unattended",
+    body: "A new README section, with the GPU numbers marked to come from the lab. Then the proof the CPU path did not move: a full run on the M4 Pro compared with the committed <code>docs/runs/2026-09-28-dynamic-sampling</code>, identical apart from <code>training.json</code>'s <code>seed</code> field, which that run predates.",
+    code: "uv run python run_pipeline.py \\\n  --out-dir results/cuda-support-cpu-check\n\ncommit: docs(readme): document opt-in CUDA\n        support" },
+  t6: { title: "Task 6 · draft PR, head SHA", meta: "push the branch · gh pr create --draft",
+    body: "The branch goes up as a draft PR whose body says not to merge until the lab's GKE smoke run passes. Its head SHA is what the lab pins as <code>PIPELINE_SHA</code> for its amd64 image.",
+    code: "git push -u origin cuda-support\ngh pr create --draft ...\ngit rev-parse HEAD  -> PIPELINE_SHA" },
+  smoke: { title: "Gate · smoke run on an L4", meta: "kueue-training-lab, first GKE session · spec: Verification on a GPU",
+    body: "A short run in each mode, each followed by a resume, from the branch's head. It must finish without an error, report a CUDA device in its provenance, and resume. This is the first time the code meets a GPU. A failure is fixed on the branch and the smoke run repeats.",
+    code: "--device cuda               + resume\n--device cuda --deterministic + resume" },
+  merge: { title: "Merge to main", meta: "then the lab pins the merge commit",
+    body: "Only after the smoke run passes. Then the lab rebuilds its image at the merge commit and runs the real verification: two deterministic runs that must compare identical, and one fast run whose gap the README reports.",
+    code: "make compare REF=<deterministic run 1> \\\n  CAND=<deterministic run 2>   # must PASS" },
+};
+const T = document.getElementById("p-title"), M = document.getElementById("p-meta"),
+      B = document.getElementById("p-body"), C = document.getElementById("p-code");
+const items = document.querySelectorAll("[data-k]");
+function activate(el) {
+  const d = DETAIL[el.dataset.k]; if (!d) return;
+  items.forEach(x => x.classList.remove("active")); el.classList.add("active");
+  T.textContent = d.title; M.textContent = d.meta; B.innerHTML = d.body; C.textContent = d.code;
+}
+items.forEach(el => {
+  el.addEventListener("click", () => activate(el));
+  el.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(el); } });
+});
+activate(document.querySelector('[data-k="t1"]'));
+</script>
+</body>
+</html>
