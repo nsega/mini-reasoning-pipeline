@@ -201,6 +201,63 @@ uv run python run_pipeline.py --stage validate --checkpoint-dir checkpoints/run-
 design is in
 [docs/specs/2026-10-09-checkpoint-resume-design.md](docs/specs/2026-10-09-checkpoint-resume-design.md).
 
+## Running on a GPU
+
+A run is on CPU unless it asks for CUDA. On a machine with an NVIDIA
+GPU:
+
+```bash
+uv run python run_pipeline.py --device cuda
+```
+
+The model loads in float32 and moves to the GPU once loaded, and the
+pipeline stays float32 on every device, with no TF32 and no mixed
+precision. A machine with no usable GPU stops before the model loads,
+and it never falls back to CPU. `uv.lock` resolves torch with CUDA 13.0
+builds on Linux, so the machine needs an NVIDIA driver new enough for
+CUDA 13.0.
+
+Fast mode, which is what `--device cuda` gives on its own, does not
+reproduce itself: CUDA kernels may sum in a different order from one
+run to the next, so two runs of the same command can write different
+records. By design, nothing here promises otherwise. `--deterministic`
+trades speed for a run that does reproduce itself:
+
+```bash
+uv run python run_pipeline.py --device cuda --deterministic
+```
+
+It needs `--device cuda` and is refused without it, since a CPU run is
+already deterministic. It switches PyTorch to deterministic kernels
+before the first CUDA call (`CUBLAS_WORKSPACE_CONFIG`,
+`torch.use_deterministic_algorithms(True)` and the cuDNN switches), and
+it replaces one step of sampling. transformers' nucleus step takes a
+cumulative sum that deterministic mode forbids on a CUDA tensor, so
+`DeterministicTopP` in `mini_reasoning/device.py` computes the same
+nucleus with a deterministic one. CPU and fast mode keep transformers'
+own step.
+
+Records from different devices never match. A CUDA run's records
+differ from a CPU run's, and a deterministic run reproduces only
+itself, on the same GPU type, driver, CUDA and PyTorch versions. Each
+device keeps its own reference run, and a comparison is only meaningful
+inside one. A CUDA run's eval records add `device`, `deterministic`,
+`gpu` and `cuda` to their provenance, and a CPU run adds none of them,
+so CPU records are unchanged. A baseline reuse or a checkpoint resume
+refuses a different device or mode, naming the setting that differs.
+
+Two kinds of numbers are to come, from kueue-training-lab's runs
+on an L4:
+
+- How far fast mode's accuracy figures and records sit from a
+  deterministic run's. The gap covers determinism and the one replaced
+  nucleus step together.
+- The wall-clock time of both modes, beside the M4 Pro's CPU timings.
+
+Nothing is estimated here until those runs have measured it. The design
+is in
+[docs/specs/2026-10-26-cuda-support-design.md](docs/specs/2026-10-26-cuda-support-design.md).
+
 ## Provenance
 
 This repository was built with AI assistance (Claude). Commit trailers
@@ -219,7 +276,8 @@ alone would mislead in both directions, so the split is set out here.
 - **Written with AI assistance:** GRPO, the trainer, the evaluator and
   the entry point (`grpo.py`, `trainer.py`, `evaluate.py` and
   `run_pipeline.py`). `report.py`, `checkpoint.py` and their tests are
-  AI-written, and their headers say so.
+  AI-written, and their headers say so. `device.py` and
+  `tests/test_device.py` are AI-written as well.
 - **Tests and scaffolding:** every test file began in the AI-written
   scaffold commit or was extended with AI assistance. The data script
   is AI-written, and its header says so.

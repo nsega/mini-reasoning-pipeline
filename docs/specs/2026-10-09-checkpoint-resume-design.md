@@ -4,7 +4,7 @@ Status: design approved in conversation, 2026-10-09. Awaiting spec review before
 
 ## Problem
 
-[kueue-training-lab](https://github.com/nsega/kueue-training-lab) runs this pipeline under Kueue, which preempts and evicts running workloads. An evicted run restarts from nothing today: the baseline eval (about an hour) and training (about 69 minutes) both run again. The lab measures what an eviction costs under three strategies (one Job, one Job checkpointed, three Workloads), and it judges every experiment by this repository's own standard: the records must equal a clean run's. So a resume has to be exact. A resume that is merely close is a failed experiment.
+kueue-training-lab runs this pipeline under Kueue, which preempts and evicts running workloads. An evicted run restarts from nothing today: the baseline eval (about an hour) and training (about 69 minutes) both run again. The lab measures what an eviction costs under three strategies (one Job, one Job checkpointed, three Workloads), and it judges every experiment by this repository's own standard: the records must equal a clean run's. So a resume has to be exact. A resume that is merely close is a failed experiment.
 
 Most of what exactness needs is already here. Each eval seeds problem i with `--seed` + i, and training seeds draw d with the training seed + d, so the global RNG never has to be saved: the draw count rebuilds it. Qwen3's attention dropout is 0.0, so a training forward pass draws nothing random either. What a killed process loses is the state no seed can rebuild: the policy's weights, Adam's moments and step counts, and the loop's place in its pool.
 
