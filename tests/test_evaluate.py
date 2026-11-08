@@ -12,9 +12,12 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from transformers import BatchEncoding
+
+from mini_reasoning.device import DeterministicTopP
 from mini_reasoning.evaluate import (
-    _eos_ids, evaluate, provenance, sequence_logprob_summary,
-    token_logprobs_from_logits,
+    _eos_ids, evaluate, provenance, sample_solutions,
+    sequence_logprob_summary, token_logprobs_from_logits,
 )
 from mini_reasoning.scorers import (
     REJECTED, Candidate, Composite, ParseabilityGate, VoteAgreement,
@@ -101,6 +104,68 @@ class TestSampling:
         with pytest.raises(ValueError):
             evaluate(MODEL, TOKENIZER, [P1], lenient(), n_samples=3,
                      sampler=short)
+
+
+class RecordingModel:
+    """A model whose generate records the keyword arguments it receives."""
+
+    device = torch.device("cpu")
+    generation_config = SimpleNamespace(eos_token_id=2, top_k=20)
+
+    def __init__(self):
+        self.generate_kwargs = None
+
+    def generate(self, **kwargs):
+        self.generate_kwargs = kwargs
+        return torch.tensor([[5, 6, 7, 8], [5, 6, 9, 2]])
+
+    def __call__(self, rows):
+        return SimpleNamespace(logits=torch.zeros(*rows.shape, 10))
+
+
+class StubTokenizer:
+    """Encodes every prompt as three tokens and decodes to fixed text."""
+
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(self, text, return_tensors):
+        return BatchEncoding({"input_ids": torch.tensor([[5, 6, 7]])})
+
+    def batch_decode(self, ids, skip_special_tokens):
+        return ["text"] * len(ids)
+
+
+class TestSamplerDeterminism:
+    """`deterministic` swaps the sampling arguments, and only when asked."""
+
+    def test_sample_solutions_calls_generate_as_before_by_default(self):
+        model = RecordingModel()
+        sample_solutions(model, StubTokenizer(), "p", 2)
+        kwargs = model.generate_kwargs
+        assert kwargs["temperature"] == 0.7
+        assert kwargs["top_p"] == 0.95
+        assert "logits_processor" not in kwargs
+        assert "top_k" not in kwargs
+
+    def test_sample_solutions_deterministic_passes_the_chain(self):
+        model = RecordingModel()
+        sample_solutions(model, StubTokenizer(), "p", 2, deterministic=True)
+        kwargs = model.generate_kwargs
+        assert kwargs["temperature"] == 1.0
+        assert kwargs["top_k"] == 0
+        assert kwargs["top_p"] == 1.0
+        last = kwargs["logits_processor"][-1]
+        assert isinstance(last, DeterministicTopP)
+        assert last.top_p == 0.95
+
+    def test_deterministic_chain_uses_the_given_temperature_and_top_p(self):
+        model = RecordingModel()
+        sample_solutions(model, StubTokenizer(), "p", 2, temperature=0.5,
+                         top_p=0.8, deterministic=True)
+        processors = model.generate_kwargs["logits_processor"]
+        assert processors[0].temperature == 0.5
+        assert processors[-1].top_p == 0.8
 
 
 class TestSelection:
@@ -407,3 +472,57 @@ class TestProvenance:
         got = provenance(object(), seed=1, n_samples=2, fallback=None)
         assert got["torch"] == torch.__version__
         assert "transformers" in got
+
+
+CPU_PROVENANCE_KEYS = {"model", "dtype", "seed", "n_samples", "fallback",
+                       "torch", "transformers"}
+
+
+class FakeCudaModel:
+    """Stands in for a model on a GPU: no machine here has one.
+
+    Its parameters report a CUDA device, which is all provenance reads.
+    """
+
+    def parameters(self):
+        yield SimpleNamespace(device=torch.device("cuda", 0),
+                              dtype=torch.float32)
+
+
+def on_an_l4(monkeypatch, deterministic=True):
+    monkeypatch.setattr(torch.cuda, "get_device_name",
+                        lambda device=None: "NVIDIA L4")
+    monkeypatch.setattr(torch.version, "cuda", "13.0")
+    monkeypatch.setattr(torch, "are_deterministic_algorithms_enabled",
+                        lambda: deterministic)
+
+
+class TestProvenanceDevice:
+    """A CPU stamp is exactly what it was before CUDA support, and a CUDA
+    stamp adds the fields that tell its records apart."""
+
+    def test_provenance_on_cpu_has_exactly_todays_keys(self):
+        got = provenance(torch.nn.Linear(2, 2), seed=42, n_samples=7,
+                         fallback="number")
+        assert set(got) == CPU_PROVENANCE_KEYS
+
+    def test_provenance_on_a_model_without_parameters_is_cpu(self):
+        got = provenance(object(), seed=42, n_samples=7, fallback="number")
+        assert set(got) == CPU_PROVENANCE_KEYS
+
+    def test_provenance_on_cuda_adds_the_device_fields(self, monkeypatch):
+        on_an_l4(monkeypatch, deterministic=True)
+        got = provenance(FakeCudaModel(), seed=42, n_samples=7,
+                         fallback="number")
+        assert got["device"] == "cuda"
+        assert got["deterministic"] is True
+        assert got["gpu"] == "NVIDIA L4"
+        assert got["cuda"] == "13.0"
+        assert CPU_PROVENANCE_KEYS <= set(got)
+
+    def test_provenance_on_cuda_records_the_fast_mode_too(self, monkeypatch):
+        on_an_l4(monkeypatch, deterministic=False)
+        got = provenance(FakeCudaModel(), seed=42, n_samples=7,
+                         fallback="number")
+        assert got["deterministic"] is False
+

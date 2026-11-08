@@ -15,10 +15,15 @@ import pytest
 import torch
 from torch import nn
 
-from mini_reasoning import grpo
+from types import SimpleNamespace
+
+from transformers import BatchEncoding
+
+from mini_reasoning import grpo, trainer
+from mini_reasoning.device import DeterministicTopP
 from mini_reasoning.trainer import (
-    Resume, Rollouts, draw_cap, rollout_rewards, sequence_logprobs, train,
-    train_step,
+    Resume, Rollouts, draw_cap, rollout_rewards, sample_rollouts,
+    sequence_logprobs, train, train_step,
 )
 
 VOCAB, PROMPT_LEN = 32, 3
@@ -83,6 +88,98 @@ class TestReward:
         """group_relative_advantages casts, but a bool tensor reaching
         it at all means the harness handed over the raw verdicts."""
         assert rollout_rewards([RIGHT], "42").dtype.is_floating_point
+
+
+class RecordingModel:
+    """A model whose generate records the keyword arguments it receives."""
+
+    device = torch.device("cpu")
+    generation_config = SimpleNamespace(top_k=20)
+
+    def __init__(self):
+        self.generate_kwargs = None
+
+    def generate(self, **kwargs):
+        self.generate_kwargs = kwargs
+        return torch.tensor([[5, 6, 7, 8], [5, 6, 9, 2]])
+
+
+class StubTokenizer:
+    """Encodes every prompt as three tokens and decodes to fixed text."""
+
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(self, text, return_tensors):
+        return BatchEncoding({"input_ids": torch.tensor([[5, 6, 7]])})
+
+    def batch_decode(self, ids, skip_special_tokens):
+        return ["text"] * len(ids)
+
+
+class TestRolloutSampling:
+    """`deterministic` swaps the sampling arguments, and only when asked."""
+
+    def test_sample_rollouts_calls_generate_as_before_by_default(self):
+        model = RecordingModel()
+        sample_rollouts(model, StubTokenizer(), "p", 2)
+        kwargs = model.generate_kwargs
+        assert kwargs["temperature"] == 0.7
+        assert kwargs["top_p"] == 0.95
+        assert "logits_processor" not in kwargs
+        assert "top_k" not in kwargs
+
+    def test_sample_rollouts_deterministic_passes_the_chain(self):
+        model = RecordingModel()
+        sample_rollouts(model, StubTokenizer(), "p", 2, deterministic=True)
+        kwargs = model.generate_kwargs
+        assert kwargs["temperature"] == 1.0
+        assert kwargs["top_k"] == 0
+        assert kwargs["top_p"] == 1.0
+        last = kwargs["logits_processor"][-1]
+        assert isinstance(last, DeterministicTopP)
+        assert last.top_p == 0.95
+
+
+class TestRewardDevice:
+    """The loss multiplies the advantages by the logprobs, so the two must
+    share a device. CUDA is not available here, so the meta device stands
+    in for "not the CPU"."""
+
+    def test_rewards_follow_the_logprobs_device(self, monkeypatch):
+        seen = []
+
+        def record(logprobs, advantages):
+            seen.append((logprobs.device, advantages.device))
+            return torch.zeros((), requires_grad=True)
+
+        monkeypatch.setattr(
+            trainer, "sequence_logprobs",
+            lambda model, rollouts: torch.zeros(1, device="meta"))
+        monkeypatch.setattr(grpo, "grpo_loss", record)
+        model = policy()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        report = train_step(
+            model, optimizer, PROBLEM, None,
+            rollout=rollout_of([RIGHT, WRONG, RIGHT, WRONG]), group_size=4)
+        assert report["stepped"]
+        assert seen == [(torch.device("meta"), torch.device("meta"))] * 4
+
+    def test_on_cpu_the_rewards_stay_where_they_were(self, monkeypatch):
+        seen = []
+        real = grpo.grpo_loss
+
+        def record(logprobs, advantages):
+            seen.append(advantages.device)
+            return real(logprobs, advantages)
+
+        monkeypatch.setattr(grpo, "grpo_loss", record)
+        model = policy()
+        train_step(model, torch.optim.SGD(model.parameters(), lr=0.1),
+                   PROBLEM, None,
+                   rollout=rollout_of([RIGHT, WRONG, RIGHT, WRONG]),
+                   group_size=4)
+        assert seen == [torch.device("cpu")] * 4
 
 
 class TestSequenceLogprobs:

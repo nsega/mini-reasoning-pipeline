@@ -36,6 +36,7 @@ from typing import Protocol
 import torch
 
 from mini_reasoning import grpo, verifier
+from mini_reasoning.device import deterministic_sampling_kwargs
 from mini_reasoning.evaluate import PROMPT
 
 MAX_GRAD_NORM = 1.0
@@ -108,7 +109,8 @@ class Rollouts:
 
 def sample_rollouts(model, tokenizer, problem: str, n: int,
                     max_new_tokens: int = 512, temperature: float = 0.7,
-                    top_p: float = 0.95) -> Rollouts:
+                    top_p: float = 0.95,
+                    deterministic: bool = False) -> Rollouts:
     """Generates one problem's group, off the gradient path.
 
     The prompt is the one the eval path uses, imported rather than
@@ -127,6 +129,11 @@ def sample_rollouts(model, tokenizer, problem: str, n: int,
         max_new_tokens: Generation cap per rollout.
         temperature: Sampling temperature.
         top_p: Nucleus sampling cutoff.
+        deterministic: Sample through device.deterministic_sampling_kwargs,
+            whose nucleus step runs its cumulative sum on CPU so that
+            torch.use_deterministic_algorithms(True) does not raise on
+            CUDA. False passes temperature and top_p straight to
+            generate, as CPU runs always have.
 
     Returns:
         The group, with the token ids the backward pass rescores.
@@ -138,8 +145,13 @@ def sample_rollouts(model, tokenizer, problem: str, n: int,
     inputs = inputs.to(model.device)
     prompt_len = inputs["input_ids"].shape[1]
     with torch.no_grad():
+        if deterministic:
+            sampling = deterministic_sampling_kwargs(
+                model, temperature, top_p)
+        else:
+            sampling = {"temperature": temperature, "top_p": top_p}
         sequences = model.generate(
-            **inputs, do_sample=True, temperature=temperature, top_p=top_p,
+            **inputs, do_sample=True, **sampling,
             num_return_sequences=n, max_new_tokens=max_new_tokens,
             pad_token_id=pad_id)
     texts = tokenizer.batch_decode(sequences[:, prompt_len:],
@@ -234,7 +246,10 @@ def train_step(model, optimizer, problem, tokenizer, *, rollout,
     group = len(rollouts.texts)
     for index in range(group):
         logprob = sequence_logprobs(model, _one_rollout(rollouts, index))
-        loss = grpo.grpo_loss(logprob, advantages[index:index + 1])
+        # The rewards are built on the CPU. The advantage follows the
+        # logprob's device here, so the loss never mixes the two.
+        advantage = advantages[index:index + 1].to(logprob.device)
+        loss = grpo.grpo_loss(logprob, advantage)
         (loss / group).backward()
 
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)

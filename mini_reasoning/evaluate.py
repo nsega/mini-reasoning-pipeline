@@ -31,6 +31,7 @@ from importlib import metadata
 import torch
 
 from mini_reasoning import verifier
+from mini_reasoning.device import deterministic_sampling_kwargs
 from mini_reasoning.scorers import REJECTED, Candidate, Scorer
 
 MATH500_LEVEL_COUNTS = {1: 43, 2: 90, 3: 105, 4: 128, 5: 134}
@@ -45,7 +46,8 @@ PROMPT = ("Problem: {problem}\n"
 def sample_solutions(model, tokenizer, problem: str, n: int,
                      max_new_tokens: int = 512, temperature: float = 0.7,
                      top_p: float = 0.95,
-                     logprob_batch: int = 1) -> list[Candidate]:
+                     logprob_batch: int = 1,
+                     deterministic: bool = False) -> list[Candidate]:
     """Samples n solutions and summarises each by its mean token logprob.
 
     The prompt is plain text rather than the tokenizer's chat template:
@@ -73,6 +75,11 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
         top_p: Nucleus sampling cutoff.
         logprob_batch: Rows scored per forward pass. One keeps the peak
             at a single sequence's logits.
+        deterministic: Sample through device.deterministic_sampling_kwargs,
+            whose nucleus step runs its cumulative sum on CPU so that
+            torch.use_deterministic_algorithms(True) does not raise on
+            CUDA. False passes temperature and top_p straight to
+            generate, as CPU runs always have.
 
     Returns:
         One Candidate per sample: the decoded text, the mean logprob the
@@ -87,8 +94,13 @@ def sample_solutions(model, tokenizer, problem: str, n: int,
     inputs = inputs.to(model.device)
     prompt_len = inputs["input_ids"].shape[1]
     with torch.no_grad():
+        if deterministic:
+            sampling = deterministic_sampling_kwargs(
+                model, temperature, top_p)
+        else:
+            sampling = {"temperature": temperature, "top_p": top_p}
         sequences = model.generate(
-            **inputs, do_sample=True, temperature=temperature, top_p=top_p,
+            **inputs, do_sample=True, **sampling,
             num_return_sequences=n, max_new_tokens=max_new_tokens,
             pad_token_id=pad_id)
         token_logprobs = _generated_token_logprobs(
@@ -254,6 +266,15 @@ def _model_dtype(model) -> str | None:
     return str(first.dtype) if first is not None else None
 
 
+def _model_device(model) -> str | None:
+    """The device type of the policy's first parameter, where it has one."""
+    try:
+        first = next(iter(model.parameters()), None)
+    except (AttributeError, TypeError):
+        return None
+    return first.device.type if first is not None else None
+
+
 def _package_version(name: str) -> str | None:
     """The installed version, or None where the package is absent."""
     try:
@@ -285,6 +306,14 @@ def provenance(model, *, seed, n_samples, fallback) -> dict:
     records unreusable in practice, but whoever has to explain a strange
     result wants to know them.
 
+    A CUDA model adds four fields. ``device`` and ``deterministic`` are
+    identity, compared by the reuse check, so a CUDA run never reuses a
+    CPU baseline and a deterministic run never reuses a fast one. ``gpu``
+    and ``cuda`` are recorded like the library versions and compared by
+    nothing here. A CPU model adds none of them, and a stamp without a
+    ``device`` means CPU, so CPU records stay byte-identical to those
+    written before CUDA support.
+
     Args:
         model: The policy. It may be anything the sampler accepts; one
             that cannot say what it is records None rather than raising,
@@ -296,7 +325,7 @@ def provenance(model, *, seed, n_samples, fallback) -> dict:
     Returns:
         The stamp, JSON-serialisable throughout.
     """
-    return {
+    stamp = {
         "model": _model_name(model),
         "dtype": _model_dtype(model),
         "seed": seed,
@@ -304,6 +333,14 @@ def provenance(model, *, seed, n_samples, fallback) -> dict:
         "fallback": fallback,
         **library_versions(),
     }
+    if _model_device(model) == "cuda":
+        stamp.update({
+            "device": "cuda",
+            "deterministic": torch.are_deterministic_algorithms_enabled(),
+            "gpu": torch.cuda.get_device_name(),
+            "cuda": torch.version.cuda,
+        })
+    return stamp
 
 
 def evaluate(model, tokenizer, problems: Sequence[Mapping], scorer: Scorer,

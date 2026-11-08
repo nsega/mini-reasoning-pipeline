@@ -47,6 +47,7 @@ from pathlib import Path
 import torch
 from safetensors.torch import load_model, save_model
 
+from mini_reasoning.device import shown_field
 from mini_reasoning.evaluate import library_versions
 from mini_reasoning.trainer import Resume
 
@@ -60,8 +61,10 @@ OPTIMIZER = "optimizer.pt"
 STATE = "state.json"
 # Compared before the model loads. dtype is compared after, against the
 # loaded model itself, since only the model can say what it holds.
+# device and deterministic are absent from a CPU run's identity and compared
+# with .get, so a checkpoint saved before CUDA support still matches a CPU run.
 IDENTITY = ("model", "seed", "steps", "max_draws", "group_size", "lr",
-            "pool")
+            "pool", "device", "deterministic")
 # What a volume that cannot sync a directory answers. ENOTSUP and
 # EOPNOTSUPP are one value on Linux and two on macOS.
 UNSYNCABLE_DIRECTORY = {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
@@ -247,8 +250,9 @@ def read_latest(directory, identity: Mapping) -> Saved | None:
         if saved_identity.get(field) != identity.get(field):
             raise ValueError(
                 f"the checkpoint in {directory} was made with {field}="
-                f"{saved_identity.get(field)!r} and this run has {field}="
-                f"{identity.get(field)!r}, so it belongs to another run. "
+                f"{shown_field(field, saved_identity.get(field))!r} and this "
+                f"run has {field}="
+                f"{shown_field(field, identity.get(field))!r}, so it belongs to another run. "
                 "Use a new --checkpoint-dir for this one.")
     return Saved(path=path, history=state["history"],
                  position=state["position"], complete=state["complete"],
@@ -293,9 +297,26 @@ def load_weights(saved: Saved, model) -> None:
 
 def resume_from(saved: Saved, model) -> Resume:
     """Loads the saved weights into model and returns where training
-    picks up, optimizer state included."""
+    picks up, optimizer state included.
+
+    Adam's state loads with map_location="cpu", so a checkpoint saved on
+    CUDA loads anywhere. Optimizer.load_state_dict then moves the moment
+    estimates to each parameter's device and leaves step on the CPU, as in
+    a clean run.
+
+    Args:
+        saved: The checkpoint read_latest found.
+        model: The policy, already on the run's device.
+
+    Returns:
+        Where training resumes: history, position and optimizer state.
+
+    Raises:
+        ValueError: if the model's dtype is not the saved weights'.
+    """
     load_weights(saved, model)
-    optimizer_state = torch.load(saved.path / OPTIMIZER, weights_only=True)
+    optimizer_state = torch.load(saved.path / OPTIMIZER, weights_only=True,
+                                 map_location="cpu")
     return Resume(history=saved.history, position=saved.position,
                   optimizer_state=optimizer_state)
 
