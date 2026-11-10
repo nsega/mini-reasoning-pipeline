@@ -217,6 +217,16 @@ and it never falls back to CPU. `uv.lock` resolves torch with CUDA 13.0
 builds on Linux, so the machine needs an NVIDIA driver new enough for
 CUDA 13.0.
 
+torch 2.13 runs a few CUDA operations through Triton kernels that it
+compiles the first time they run, and Triton needs a C compiler to
+build its CUDA helper. On a machine or container without one, such as a
+`python:*-slim` image, the first generation stops with "Failed to find
+C compiler". Install `gcc` or `clang`, or set
+`TORCH_DISABLE_NATIVE_JIT=1`, which keeps those operations on PyTorch's
+standard kernels. A container built on a base other than NVIDIA's CUDA
+images also needs the driver's libraries on `LD_LIBRARY_PATH`: GKE, for
+example, mounts them at `/usr/local/nvidia/lib64`.
+
 Fast mode, which is what `--device cuda` gives on its own, does not
 reproduce itself: CUDA kernels may sum in a different order from one
 run to the next, so two runs of the same command can write different
@@ -245,6 +255,11 @@ inside one. A CUDA run's eval records add `device`, `deterministic`,
 `gpu` and `cuda` to their provenance, and a CPU run adds none of them,
 so CPU records are unchanged. A baseline reuse or a checkpoint resume
 refuses a different device or mode, naming the setting that differs.
+
+Both modes have run on an NVIDIA L4 (driver 580.178.04, CUDA 13.0), in
+kueue-training-lab's smoke run on 2026-11-07: a short run in each mode
+finished, resumed after being killed, and recorded the GPU in its
+provenance.
 
 Two kinds of numbers are to come, from kueue-training-lab's runs
 on an L4:
