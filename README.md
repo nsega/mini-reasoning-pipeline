@@ -261,16 +261,26 @@ kueue-training-lab's smoke run on 2026-11-07: a short run in each mode
 finished, resumed after being killed, and recorded the GPU in its
 provenance.
 
-Two kinds of numbers are to come, from kueue-training-lab's runs
-on an L4:
+Measured end to end on one NVIDIA L4 by kueue-training-lab on
+2026-11-10 and 11, for the full run above, with driver 580.178.04, CUDA
+13.0, float32, `TORCH_DISABLE_NATIVE_JIT=1` and torch pinned to 8
+threads: 1h14m00s and 1h14m33s for two deterministic runs and 1h07m27s
+for one fast run. GPU memory peaked at 14,808 MiB in deterministic mode
+and 14,746 MiB in fast mode, of the L4's 23,034 MiB. For time only, the
+same run takes about three hours on CPU on the M4 Pro.
 
-- How far fast mode's accuracy figures and records sit from a
-  deterministic run's. The gap covers determinism and the one replaced
-  nucleus step together.
-- The wall-clock time of both modes, beside the M4 Pro's CPU timings.
+The two deterministic runs, on two different L4s, wrote identical
+records. The fast run's records were identical to them as well, apart
+from the `deterministic` field in their provenance, so its accuracy
+figures matched exactly: 0.360 at the baseline and 0.320 after
+training. On that setup, deterministic mode cost about 9% in time and
+changed no record. The gap covers determinism and the one replaced
+nucleus step together. That is one fast run, so it does not make fast
+mode reproducible, and on another GPU type or driver, or on torch's
+default kernels without `TORCH_DISABLE_NATIVE_JIT=1`, the gap may not be
+zero.
 
-Nothing is estimated here until those runs have measured it. The design
-is in
+The design is in
 [docs/specs/2026-10-26-cuda-support-design.md](docs/specs/2026-10-26-cuda-support-design.md).
 
 ## Provenance
